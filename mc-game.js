@@ -132,7 +132,7 @@
     MONSTER_ORDER.forEach(k=>{
       monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault ? 1 : 0 };
     });
-    return { gold: 300, monsters, stages: {}, totalScore: 0 };
+    return { gold: 300, monsters, stages: {}, totalScore: 0, sfxOn: true };
   }
   let state = Object.assign(defaultState(), Storage.get('mc_state', {}));
   // 深いマージ漏れ対策（旧セーブに新モンスターが無い場合を補完）
@@ -201,7 +201,19 @@
   const overlayScoreEl = el('overlayScore'), overlayGoldEl = el('overlayGold'), overlayTextEl = el('overlayText');
   const overlayPrimaryEl = el('overlayPrimaryBtn'), overlaySecondaryEl = el('overlaySecondaryBtn');
 
-  function refreshTopbar(){ goldTopEl.textContent = state.gold; }
+  function refreshTopbar(){
+    goldTopEl.textContent = state.gold;
+    const btn = el('soundToggleBtn');
+    if(btn){
+      btn.textContent = state.sfxOn !== false ? '🔊' : '🔇';
+      btn.classList.toggle('muted', state.sfxOn === false);
+    }
+  }
+  el('soundToggleBtn').addEventListener('click', ()=>{
+    state.sfxOn = state.sfxOn === false ? true : false;
+    saveState(); refreshTopbar();
+    if(state.sfxOn) SFX.click();
+  });
 
   function showScreen(name){
     Object.keys(screens).forEach(k=> screens[k].classList.toggle('hidden', k!==name));
@@ -218,9 +230,9 @@
     refreshTopbar();
   }
   document.querySelectorAll('.nav-item').forEach(item=>{
-    item.addEventListener('click', ()=> showScreen(item.dataset.nav));
+    item.addEventListener('click', ()=>{ SFX.click(); showScreen(item.dataset.nav); });
   });
-  el('splashPlayBtn').addEventListener('click', ()=> showScreen('map'));
+  el('splashPlayBtn').addEventListener('click', ()=>{ SFX.unlock(); showScreen('map'); });
   el('worldPrevBtn').addEventListener('click', ()=>{
     if(mapWorldView>1){ mapWorldView--; renderMap(); }
   });
@@ -333,6 +345,7 @@
         state.monsters[key].owned = true;
         state.monsters[key].level = 1;
         saveState(); renderShop(); refreshTopbar();
+        SFX.buy();
       });
     });
     wrap.querySelectorAll('[data-levelup]').forEach(btn=>{
@@ -343,6 +356,7 @@
         state.gold -= cost;
         state.monsters[key].level = Math.min(LEVEL_MAX, (state.monsters[key].level||1) + 1);
         saveState(); renderShop(); refreshTopbar();
+        SFX.buy();
       });
     });
   }
@@ -375,6 +389,7 @@
         state.gold += def.reward;
         saveState(); Storage.set('mc_missions', missionState);
         refreshTopbar(); refreshMissionDot(); renderMissions();
+        SFX.buy();
       });
     });
     refreshMissionDot();
@@ -406,6 +421,61 @@
   //  ゲーム本体（物理演算パート）
   // ==========================================================
   const { Engine, World, Bodies, Body, Composite, Events, Vector } = Matter;
+  // ---------- 効果音（Web Audio APIでコード生成、追加ファイル不要） ----------
+  const SFX = (function(){
+    let ctx = null;
+    function getCtx(){
+      if(!ctx){
+        try{ ctx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; }
+      }
+      if(ctx && ctx.state==='suspended') ctx.resume().catch(()=>{});
+      return ctx;
+    }
+    function isOn(){ return state.sfxOn !== false; }
+    function tone(freq, duration, type, startGain, freqEnd){
+      if(!isOn()) return;
+      const c = getCtx(); if(!c) return;
+      const osc = c.createOscillator(), gain = c.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.setValueAtTime(freq, c.currentTime);
+      if(freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd,1), c.currentTime+duration);
+      gain.gain.setValueAtTime(startGain||0.15, c.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime+duration);
+      osc.connect(gain); gain.connect(c.destination);
+      osc.start(); osc.stop(c.currentTime+duration);
+    }
+    function noiseBurst(duration, startGain, filterFreq){
+      if(!isOn()) return;
+      const c = getCtx(); if(!c) return;
+      const n = Math.floor(c.sampleRate*duration);
+      const buffer = c.createBuffer(1, n, c.sampleRate);
+      const data = buffer.getChannelData(0);
+      for(let i=0;i<n;i++) data[i] = (Math.random()*2-1) * Math.pow(1-i/n, 2);
+      const src = c.createBufferSource(); src.buffer = buffer;
+      const filter = c.createBiquadFilter(); filter.type='lowpass'; filter.frequency.value = filterFreq||800;
+      const gain = c.createGain();
+      gain.gain.setValueAtTime(startGain||0.3, c.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime+duration);
+      src.connect(filter); filter.connect(gain); gain.connect(c.destination);
+      src.start(); src.stop(c.currentTime+duration);
+    }
+    return {
+      unlock(){ getCtx(); },
+      launch(){ tone(180,0.22,'sawtooth',0.10,420); },
+      hit(){ tone(320,0.08,'square',0.12,120); },
+      kill(){ tone(660,0.12,'triangle',0.15,880); },
+      bossKill(){ tone(220,0.5,'sawtooth',0.18,660); setTimeout(()=>tone(440,0.4,'triangle',0.16,880),120); },
+      explosion(){ noiseBurst(0.4,0.32,500); tone(90,0.35,'sine',0.18,40); },
+      split(){ tone(520,0.1,'sine',0.12,760); },
+      freeze(){ tone(900,0.2,'sine',0.09,1400); },
+      barrel(){ noiseBurst(0.3,0.28,700); },
+      clear(){ [523,659,784,1046].forEach((f,i)=> setTimeout(()=> tone(f,0.25,'triangle',0.14), i*90)); },
+      fail(){ tone(220,0.5,'sawtooth',0.14,90); },
+      click(){ tone(700,0.05,'sine',0.07); },
+      buy(){ tone(880,0.09,'sine',0.1,1200); },
+    };
+  })();
+
   const canvas = el('game');
   const ctx = canvas.getContext('2d');
   // 高解像度端末（Retina等）対応：内部の描画バッファをdevicePixelRatio倍に拡大し、
@@ -667,6 +737,7 @@
       pushParticle(body.position.x, body.position.y-14, body.isBoss?`HIT ${body.hp}/${body.maxHp}`:'HIT', '#ffb057');
       spawnDebris(body.position.x, body.position.y, '#ffb057', 4);
       triggerShake(3);
+      SFX.hit();
     }
   }
 
@@ -685,6 +756,9 @@
     triggerShake(body.isBoss?16:6);
     if(body.isBoss){
       explosions.push({x:body.position.x, y:body.position.y, t:0});
+      SFX.bossKill();
+    } else {
+      SFX.kill();
     }
     updateHUD();
     if(enemiesArr.length===0 && !stageOver){ endStage(true); }
@@ -714,6 +788,7 @@
     explosions.push({x:pos.x, y:pos.y, t:0});
     spawnDebris(pos.x, pos.y, '#ff8a3d', 14);
     triggerShake(12);
+    SFX.barrel();
     // 連鎖：範囲内の他の樽も誘爆させる
     [...barrels].forEach(other=>{
       if(other.exploded) return;
@@ -735,6 +810,7 @@
     });
     pushParticle(pos.x, pos.y-14, '分裂!', '#7bd66b');
     spawnDebris(pos.x, pos.y, '#7bd66b', 6);
+    SFX.split();
   }
 
   function explodeAt(pos){
@@ -755,6 +831,7 @@
     explosions.push({x:pos.x, y:pos.y, t:0});
     spawnDebris(pos.x, pos.y, '#ff8a3d', 16);
     triggerShake(14);
+    SFX.explosion();
   }
 
   function freezeAt(pos){
@@ -764,6 +841,7 @@
       if(d<RADIUS){ e.frictionAir=0.9; freezeTimers.push({body:e, until: gameClock+2200}); }
     });
     pushParticle(pos.x, pos.y-10, '凍結!', '#5fc7e0');
+    SFX.freeze();
   }
 
   function pushParticle(x,y,text,color){ particles.push({x,y,text,color,t:0,life:800}); }
@@ -799,6 +877,7 @@
     stageOver = true;
     inGame = false;
     state.totalScore += stageScore;
+    if(cleared) SFX.clear(); else SFX.fail();
 
     if(cleared){
       const leftover = Math.max(0, ammoQueue.length - queueIndex - 1);
@@ -937,6 +1016,7 @@
       Body.setStatic(current.body, false);
       Body.setVelocity(current.body, {x:dx*LAUNCH_SCALE, y:dy*LAUNCH_SCALE});
       current.launched = true; turnTimer = TURN_DURATION;
+      SFX.launch();
     } else {
       Body.setPosition(current.body, ANCHOR);
     }

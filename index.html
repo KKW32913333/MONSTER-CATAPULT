@@ -73,6 +73,13 @@ html,body{
   background:var(--gold); border:2px solid var(--ink);
 }
 .currency .val{ font-family:var(--font); font-size:14px; color:var(--cloud); font-weight:800; }
+.sound-toggle{
+  width:34px; height:34px; border-radius:50%; flex:0 0 auto; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:15px;
+  background:var(--surface); border:2px solid var(--ink); box-shadow:0 3px 0 var(--ink);
+}
+.sound-toggle:active{ transform:translateY(2px); box-shadow:none; }
+.sound-toggle.muted{ opacity:.55; }
 
 /* ---------- トップ画面（スプラッシュ） ---------- */
 #screen-splash{
@@ -354,7 +361,10 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
   <!-- ===================== 共通トップバー ===================== -->
   <div class="topbar hidden" id="topbar">
     <div class="logo">🎯 <b>MONSTER</b> CATAPULT</div>
-    <div class="currency"><span class="coin"></span><span class="val" id="goldTop">0</span></div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div class="sound-toggle" id="soundToggleBtn">🔊</div>
+      <div class="currency"><span class="coin"></span><span class="val" id="goldTop">0</span></div>
+    </div>
   </div>
 
   <!-- ===================== ステージ（ワールドマップ） ===================== -->
