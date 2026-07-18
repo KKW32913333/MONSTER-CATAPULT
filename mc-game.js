@@ -51,16 +51,27 @@
 
   // ---------- 画像アセット差し込み口（未設定なら自動的にCanvas/絵文字描画にフォールバック） ----------
   // 実際のイラスト素材が用意できたら、下のパスにファイル名を設定するだけで自動的に使用されます。
-  // 例）background: 'assets/bg-volcano.jpg', monsters:{ slime:'assets/monster-slime.png', ... }
   const IMAGE_ASSETS = {
-    background: null,   // ステージ背景（推奨: 390x460以上, jpg/png）
+    // ステージ背景：ステージ番号の範囲ごとに切り替わります（stageBackgroundKey関数で対応付け）
+    backgrounds: {
+      meadow: 'bg-meadow.jpg',   // ステージ1〜2：緑の草原
+      forest: 'bg-forest.jpg',   // ステージ3〜4：森の小川
+      cave:   'bg-cave.jpg',     // ステージ5〜7：水晶の洞窟
+      snow:   'bg-snow.jpg',     // ステージ8〜10：雪山の村
+    },
     block: null,         // 砦ブロックのテクスチャ（推奨: 正方形, png）
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
     monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 128x128, png/透過）
       slime:null, dragon:null, icegolem:null, spikeball:null, skeleton:null, centaur:null,
     },
   };
-  const loadedImages = { monsters:{} };
+  function stageBackgroundKey(stageN){
+    if(stageN <= 2) return 'meadow';
+    if(stageN <= 4) return 'forest';
+    if(stageN <= 7) return 'cave';
+    return 'snow';
+  }
+  const loadedImages = { monsters:{}, backgrounds:{} };
   function preloadImages(){
     const tryLoad = (key, path, target)=>{
       if(!path) return;
@@ -69,7 +80,7 @@
       img.onerror = ()=>{ /* 読み込み失敗時は既存のCanvas/絵文字描画のまま */ };
       img.src = path;
     };
-    tryLoad('background', IMAGE_ASSETS.background, loadedImages);
+    Object.keys(IMAGE_ASSETS.backgrounds).forEach(k=> tryLoad(k, IMAGE_ASSETS.backgrounds[k], loadedImages.backgrounds));
     tryLoad('block', IMAGE_ASSETS.block, loadedImages);
     tryLoad('enemy', IMAGE_ASSETS.enemy, loadedImages);
     MONSTER_ORDER.forEach(k=> tryLoad(k, IMAGE_ASSETS.monsters[k], loadedImages.monsters));
@@ -184,9 +195,9 @@
   el('splashPlayBtn').addEventListener('click', ()=> showScreen('map'));
   (function setSplashIcon(){
     const img = new Image();
-    img.onload = ()=>{ el('splashIcon').style.backgroundImage = `url('icons/icon-192.png')`; el('splashIcon').textContent=''; };
+    img.onload = ()=>{ el('splashIcon').style.backgroundImage = `url('icon-192.png')`; el('splashIcon').textContent=''; };
     img.onerror = ()=>{ /* 画像未取得ならデフォルト絵文字のまま */ };
-    img.src = 'icons/icon-192.png';
+    img.src = 'icon-192.png';
   })();
 
   // ---------- ワールドマップ ----------
@@ -812,14 +823,21 @@
 
   function render(){
     ctx.clearRect(0,0,W,H);
-    if(loadedImages.background){
-      ctx.drawImage(loadedImages.background, 0, 0, W, H);
+    const bgImg = loadedImages.backgrounds[stageBackgroundKey(currentStage)];
+    if(bgImg){
+      ctx.drawImage(bgImg, 0, 0, W, H);
+      ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0,0,W,H); // 手前の要素を見やすくする薄暗め
     } else {
       ctx.fillStyle = '#0d0906'; ctx.fillRect(0,0,W,H);
     }
 
     const g = ctx.createLinearGradient(0,GROUND_Y,0,H);
-    g.addColorStop(0,'#3a2416'); g.addColorStop(1,'#150d08');
+    const groundColors = {
+      meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
+      cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
+    };
+    const gc = groundColors[stageBackgroundKey(currentStage)] || {a:'#3a2416', b:'#150d08'};
+    g.addColorStop(0,gc.a); g.addColorStop(1,gc.b);
     ctx.fillStyle = g; ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
     ctx.strokeStyle = 'rgba(255,122,61,0.25)';
     ctx.beginPath(); ctx.moveTo(0,GROUND_Y); ctx.lineTo(W,GROUND_Y); ctx.stroke();
