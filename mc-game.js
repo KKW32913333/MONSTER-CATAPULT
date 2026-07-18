@@ -15,8 +15,8 @@
 
   // ---------- 定数 ----------
   const WORLDS = [
-    { id:1, name:'火山の丘' },
-    { id:2, name:'氷結の山脈' },
+    { id:1, name:'草原の丘', theme:'meadow' },
+    { id:2, name:'氷結の山脈', theme:'snow' },
   ];
   const STAGES_PER_WORLD = 10;
   const TOTAL_STAGES = WORLDS.length * STAGES_PER_WORLD;
@@ -87,15 +87,8 @@
     },
   };
   function stageBackgroundKey(stageN){
-    const { worldIndex, localN } = localStageInfo(stageN);
-    if(localN % 5 === 0) return 'volcano'; // ボスステージは共通の溶岩アリーナ
-    const forward = worldIndex % 2 === 1;   // ワールドごとに巡回順を変えて変化をつける
-    const cycle = forward
-      ? ['meadow','meadow','forest','forest','cave','cave','snow','snow']
-      : ['snow','snow','cave','cave','forest','forest','meadow','meadow'];
-    const nonBossOrder = [1,2,3,4,6,7,8,9];
-    const idx = nonBossOrder.indexOf(localN);
-    return cycle[idx] || 'meadow';
+    const { worldIndex } = localStageInfo(stageN);
+    return (WORLDS[worldIndex-1] && WORLDS[worldIndex-1].theme) || 'meadow';
   }
   const loadedImages = { monsters:{}, backgrounds:{}, blocks:{} };
   function preloadImages(){
@@ -521,7 +514,7 @@
   function bossHpForStage(n){
     const { worldIndex, localN } = localStageInfo(n);
     const base = localN >= 10 ? 7 : 4;
-    return base + (worldIndex-1)*3;
+    return base + (worldIndex-1)*2;
   }
 
   function stageParams(n){
@@ -533,7 +526,7 @@
       rows: 2+capped + (boss?1:0),
       baseCount: Math.min(3+capped + (boss?1:0), 6), // 城壁がカタパルト側までせり出さないよう上限
       enemyHp: (localN>=7 ? 2 : 1) + worldBonus,
-      ammoLen: Math.max(3, 4+Math.min(localN,5)) + (boss?2:0) + worldBonus,
+      ammoLen: Math.max(4, 5+Math.min(localN,5)) + (boss?3:0) + worldBonus,
       threshBonus: Math.min(localN,10)*0.035 + worldBonus*0.05,
       isBoss: boss,
       barrelCount: (localN<3 ? 0 : (boss ? 2 : 1)) + Math.min(worldBonus,1),
@@ -660,6 +653,13 @@
     const pool = MONSTER_ORDER.filter(k=> state.monsters[k].owned);
     const queue = [];
     for(let i=0;i<sp.ammoLen;i++) queue.push(pool[Math.floor(Math.random()*pool.length)]);
+    // ボスステージは爆発（ドラゴン）を最低2体保証し、爆発系が一切引けず詰む事故を防ぐ
+    if(sp.isBoss && pool.includes('dragon')){
+      let dragonCount = queue.filter(k=>k==='dragon').length;
+      for(let i=0; i<queue.length && dragonCount<2; i++){
+        if(queue[i] !== 'dragon'){ queue[i] = 'dragon'; dragonCount++; }
+      }
+    }
     return queue;
   }
 
@@ -671,7 +671,7 @@
     blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[]; crystals=[]; castleDecor=null;
     toRemove=[]; particles=[]; explosions=[]; debris=[]; trailPoints=[]; shakeAmount=0;
     gameClock=0; killsThisTurn=0; comboCount=0; stageScore=0; stageOver=false;
-    dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
+    dragging=false; dragPoint=null; speedMul=1; paused=false; el('speedBtn').textContent='x1';
     buildGroundDecor();
 
     const ground = Bodies.rectangle(W/2, GROUND_Y+15, W+40, 30, {isStatic:true, label:'ground', friction:0.9});
@@ -983,10 +983,33 @@
   }
   function closeOverlay(){ overlayEl.classList.add('hidden'); }
 
+  let paused = false;
   el('pauseBtn').addEventListener('click', ()=>{
-    inGame = false;
-    if(engine) Events.off(engine, 'collisionStart', onCollisionStart);
-    showScreen('map');
+    if(!inGame || stageOver || paused) return;
+    paused = true;
+    SFX.click();
+    el('overlayStatLine').classList.add('hidden');
+    overlayTitleEl.textContent = '一時中断';
+    overlayTitleEl.className = '';
+    overlayStarsEl.innerHTML = '';
+    overlayTextEl.textContent = 'ステージを中断してマップに戻りますか？（このステージの進行状況は失われます）';
+    overlayPrimaryEl.textContent = '▶ 続ける';
+    overlayPrimaryEl.onclick = ()=>{
+      paused = false;
+      el('overlayStatLine').classList.remove('hidden');
+      closeOverlay();
+    };
+    overlaySecondaryEl.classList.remove('hidden');
+    overlaySecondaryEl.textContent = '🗺️ 中断してマップへ';
+    overlaySecondaryEl.onclick = ()=>{
+      paused = false;
+      el('overlayStatLine').classList.remove('hidden');
+      closeOverlay();
+      inGame = false;
+      if(engine) Events.off(engine, 'collisionStart', onCollisionStart);
+      showScreen('map');
+    };
+    overlayEl.classList.remove('hidden');
   });
 
   const speedBtnEl = el('speedBtn');
@@ -1033,7 +1056,7 @@
     return { x: cx*(W/rect.width), y: cy*(H/rect.height) };
   }
   function onDown(e){
-    if(!inGame || stageOver || !current || current.launched) return;
+    if(!inGame || stageOver || paused || !current || current.launched) return;
     const p = canvasPointFromEvent(e);
     if(Math.hypot(p.x-current.body.position.x, p.y-current.body.position.y) < 42){
       dragging = true; dragPoint = p; e.preventDefault();
@@ -1077,7 +1100,7 @@
     if(lastTs===null) lastTs = ts;
     const dt = Math.min(ts-lastTs, 33);
     lastTs = ts;
-    if(inGame && !stageOver){
+    if(inGame && !stageOver && !paused){
       for(let i=0;i<speedMul;i++) Engine.update(engine, 16.666);
       update(dt*speedMul);
     }

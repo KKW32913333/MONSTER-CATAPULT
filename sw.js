@@ -3,7 +3,7 @@
    ・HTML/JSはネットワーク優先（更新をすぐ反映）
    ・アイコン等の静的アセットはキャッシュ優先（オフライン対応）
    ========================================================== */
-const CACHE_NAME = 'monster-catapult-v6';
+const CACHE_NAME = 'monster-catapult-v21';
 const APP_SHELL = [
   './',
   './index.html',
@@ -13,6 +13,15 @@ const APP_SHELL = [
   './apple-touch-icon.png',
   './icon-192.png',
   './icon-512.png',
+  './bg-meadow.jpg',
+  './bg-forest.jpg',
+  './bg-cave.jpg',
+  './bg-snow.jpg',
+  './bg-volcano.jpg',
+  './block-stone.jpg',
+  './monster-slime.png',
+  './monster-dragon.png',
+  './monster-spikeball.png',
 ];
 
 self.addEventListener('install', (event)=>{
