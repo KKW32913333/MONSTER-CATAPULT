@@ -74,11 +74,11 @@
     },
     // 砦ブロックのテクスチャ：背景と同じテーマ区分で切り替わります
     blocks: {
-      meadow:  'block-meadow.jpg',
-      forest:  'block-forest.jpg',
-      cave:    'block-cave.jpg',
-      snow:    'block-snow.jpg',
-      volcano: 'block-volcano.jpg',
+      meadow:  'block-stone.jpg',
+      forest:  'block-stone.jpg',
+      cave:    'block-stone.jpg',
+      snow:    'block-stone.jpg',
+      volcano: 'block-stone.jpg',
     },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
     monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
@@ -489,7 +489,7 @@
   })();
 
   let engine, world;
-  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [];
+  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [], crystals = [];
   let current = null;
   let ammoQueue = [], queueIndex = 0;
   let stageScore = 0, currentStage = 1, totalEnemiesThisStage = 0;
@@ -500,6 +500,7 @@
   let toRemove = [], particles = [], explosions = [];
   let gameClock = 0;
   let killsThisTurn = 0;
+  let comboCount = 0;
   let shakeAmount = 0;
   let trailPoints = [];
   let debris = [];
@@ -622,6 +623,9 @@
     for(let i=0;i<actualBarrelCount;i++){
       addBarrel(barrelZoneRight - i*barrelSpacing, GROUND_Y-16);
     }
+
+    // ⑤ 隠しクリスタル：砦の右側の空き地に常設。狙って壊すと大きなボーナス
+    addCrystal(374, GROUND_Y-11);
   }
 
   function addBlock(x,y,w,h,isCrenel){
@@ -645,6 +649,11 @@
     b.exploded=false;
     barrels.push(b); World.add(world,b);
   }
+  function addCrystal(x,y){
+    const c = Bodies.circle(x,y,9,{density:0.0009, friction:0.4, restitution:0.5, label:'crystal'});
+    c.collected=false;
+    crystals.push(c); World.add(world,c);
+  }
 
   function buildAmmoQueue(n){
     const sp = stageParams(n);
@@ -659,9 +668,9 @@
     engine = Engine.create();
     engine.gravity.y = 1;
     world = engine.world;
-    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[]; castleDecor=null;
+    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[]; crystals=[]; castleDecor=null;
     toRemove=[]; particles=[]; explosions=[]; debris=[]; trailPoints=[]; shakeAmount=0;
-    gameClock=0; killsThisTurn=0; stageScore=0; stageOver=false;
+    gameClock=0; killsThisTurn=0; comboCount=0; stageScore=0; stageOver=false;
     dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
     buildGroundDecor();
 
@@ -716,6 +725,10 @@
         explodeBarrel(a);
       }
     }
+    if(a.label==='crystal' && crystals.includes(a) && !a.collected && b.label!=='ground'){
+      const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
+      if(relSpeed > 0.8) collectCrystal(a);
+    }
     if(!current) return;
     if(a===current.body && a.label==='proj_slime' && !current.hasSplit && b.label!=='proj_slime'){
       current.hasSplit = true; splitSlime(a);
@@ -745,13 +758,19 @@
     toRemove.push(body);
     const idx = enemiesArr.indexOf(body);
     if(idx>=0) enemiesArr.splice(idx,1);
-    const points = body.isBoss ? body.maxHp*150 : 100;
+    comboCount++;
+    const comboMult = Math.min(1 + (comboCount-1)*0.5, 4);
+    const basePoints = body.isBoss ? body.maxHp*150 : 100;
+    const points = Math.round(basePoints * comboMult);
     stageScore += points;
     killsThisTurn++;
     bumpMissionTrack('anyKill', 1);
     if(current) bumpMissionTrack('type:'+current.type, 1);
     if(source==='explosion') bumpMissionTrack('explosionKill', 1);
     pushParticle(body.position.x, body.position.y, (body.isBoss?'BOSS撃破 +':'+')+points, body.isBoss?'#ffd35e':'#f0c04a');
+    if(comboCount>=2){
+      pushParticle(body.position.x, body.position.y-24, `COMBO x${comboMult.toFixed(1).replace('.0','')}!`, comboCount>=5?'#ff5c7a':'#ffd35e', true);
+    }
     spawnDebris(body.position.x, body.position.y, body.isBoss?'#c68aff':'#c9453a', body.isBoss?16:8);
     triggerShake(body.isBoss?16:6);
     if(body.isBoss){
@@ -795,6 +814,23 @@
       const d = Vector.magnitude(Vector.sub(other.position, pos));
       if(d < RADIUS) explodeBarrel(other);
     });
+  }
+
+  function collectCrystal(body){
+    body.collected = true;
+    const idx = crystals.indexOf(body);
+    if(idx>=0) crystals.splice(idx,1);
+    toRemove.push(body);
+    const goldBonus = 50 + currentStage*8;
+    const scoreBonus = 200 + currentStage*20;
+    state.gold += goldBonus;
+    stageScore += scoreBonus;
+    pushParticle(body.position.x, body.position.y-10, `💎 CRYSTAL! +${scoreBonus}pt +${goldBonus}G`, '#5fc7e0', true);
+    spawnDebris(body.position.x, body.position.y, '#8fe0ff', 18);
+    triggerShake(8);
+    SFX.buy(); SFX.freeze();
+    refreshTopbar();
+    updateHUD();
   }
 
   function splitSlime(body){
@@ -844,7 +880,7 @@
     SFX.freeze();
   }
 
-  function pushParticle(x,y,text,color){ particles.push({x,y,text,color,t:0,life:800}); }
+  function pushParticle(x,y,text,color,big){ particles.push({x,y,text,color,t:0,life:big?950:800,big:!!big}); }
 
   function updateHUD(){
     el('ammoVal').textContent = Math.max(0, ammoQueue.length - queueIndex - (current && current.launched ? 1 : 0));
@@ -974,7 +1010,7 @@
   function forceNextTurn(){
     if(current && current.body) toRemove.push(current.body);
     if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
-    killsThisTurn = 0;
+    killsThisTurn = 0; comboCount = 0;
     queueIndex++;
     current = null;
     trailPoints = [];
@@ -1094,7 +1130,7 @@
       if(turnTimer<=0 || offscreen || !stillExists){
         if(stillExists) World.remove(world, current.body);
         if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
-        killsThisTurn = 0;
+        killsThisTurn = 0; comboCount = 0;
         queueIndex++;
         current = null;
         trailPoints = [];
@@ -1109,18 +1145,31 @@
     updateHUD();
   }
 
+  const stoneThemeTint = {
+    meadow:  'rgba(120,150,90,0.18)',
+    forest:  'rgba(60,110,70,0.22)',
+    cave:    'rgba(40,40,70,0.35)',
+    snow:    'rgba(180,210,235,0.30)',
+    volcano: 'rgba(180,60,30,0.28)',
+  };
   function drawRectBody(b,color){
     ctx.save();
     ctx.translate(b.position.x, b.position.y);
     ctx.rotate(b.angle);
-    const blockImg = loadedImages.blocks[stageBackgroundKey(currentStage)];
+    const themeKey = stageBackgroundKey(currentStage);
+    const blockImg = loadedImages.blocks[themeKey];
     if(blockImg){
-      ctx.drawImage(blockImg, -b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+      ctx.drawImage(blockImg, -b.blockW/2-0.6,-b.blockH/2-0.6,b.blockW+1.2,b.blockH+1.2);
+      const tint = stoneThemeTint[themeKey];
+      if(tint){
+        ctx.fillStyle = tint;
+        ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+      }
     } else {
       ctx.fillStyle = color;
       ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     }
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth=1;
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
     ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     ctx.restore();
   }
@@ -1196,16 +1245,41 @@
       }
     });
 
-    // カタパルト（拡大・存在感）
+    // カタパルト（装飾的な木製カタパルト：車輪・横木・カップ）
     const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
     ctx.lineCap='round';
-    ctx.strokeStyle = '#503a22'; ctx.lineWidth=9;
+    // 車輪
+    [ax-26, ax+26].forEach(wx=>{
+      ctx.beginPath(); ctx.fillStyle='#2a1c10'; ctx.arc(wx, baseY+6, 12, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.fillStyle='#4a3320'; ctx.arc(wx, baseY+6, 8, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#1a1008'; ctx.lineWidth=2;
+      for(let sp=0; sp<4; sp++){
+        const a=sp*Math.PI/2;
+        ctx.beginPath(); ctx.moveTo(wx,baseY+6); ctx.lineTo(wx+Math.cos(a)*8, baseY+6+Math.sin(a)*8); ctx.stroke();
+      }
+    });
+    // 脚（太め・二重トーン）
+    ctx.strokeStyle = '#503a22'; ctx.lineWidth=10;
     ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.strokeStyle = '#78552f'; ctx.lineWidth=4;
+    ctx.strokeStyle = '#8a6438'; ctx.lineWidth=4;
     ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.fillStyle='#3c2a1a'; ctx.ellipse(ax,baseY+2,16,8,0,0,Math.PI*2); ctx.fill();
+    // 横木の補強
+    ctx.strokeStyle = '#6b4a28'; ctx.lineWidth=6;
+    ctx.beginPath(); ctx.moveTo(ax-22,baseY-18); ctx.lineTo(ax+22,baseY-18); ctx.stroke();
+    // 支柱の金具
+    ctx.beginPath(); ctx.fillStyle='#3a2a18'; ctx.ellipse(ax,baseY+2,18,9,0,0,Math.PI*2); ctx.fill();
+    // アーム（アンカーへ向かう斜めの腕）とロープ
+    ctx.strokeStyle = '#3a2a18'; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(ax-8,baseY-14); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = 'rgba(200,170,120,0.7)'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(ax-22,baseY-18); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+22,baseY-18); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.setLineDash([]);
+    // カップ（モンスターを乗せる受け皿）
+    ctx.beginPath(); ctx.fillStyle='#5a3f24'; ctx.arc(ax,ay+4,16,0,Math.PI,false); ctx.fill();
+    ctx.strokeStyle='#2a1c10'; ctx.lineWidth=2; ctx.stroke();
 
     if(dragging && current && dragPoint){
       ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
@@ -1272,6 +1346,23 @@
       ctx.font='13px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.fillStyle='#ff6a3d';
       ctx.fillText('⚠', 0, -1);
+      ctx.restore();
+    });
+
+    crystals.forEach(c=>{
+      const pulse = 1 + Math.sin(performance.now()/220 + c.position.x)*0.15;
+      ctx.save();
+      ctx.translate(c.position.x, c.position.y);
+      ctx.rotate(c.angle);
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(95,199,224,0.28)';
+      ctx.arc(0,0,15*pulse,0,Math.PI*2); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0,-10*pulse); ctx.lineTo(7,0); ctx.lineTo(0,10*pulse); ctx.lineTo(-7,0);
+      ctx.closePath();
+      ctx.fillStyle = '#8fe0ff';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth=1.5; ctx.stroke();
       ctx.restore();
     });
 
@@ -1357,9 +1448,22 @@
     particles.forEach(p=>{
       const a = 1-p.t/p.life;
       ctx.globalAlpha = Math.max(0,a);
-      ctx.font='11px "Courier New",monospace'; ctx.textAlign='center';
-      ctx.fillStyle = p.color;
-      ctx.fillText(p.text, p.x, p.y - p.t/40);
+      if(p.big){
+        const scale = 1 + Math.min(p.t/120, 1)*0.25;
+        ctx.save();
+        ctx.translate(p.x, p.y - p.t/30);
+        ctx.scale(scale, scale);
+        ctx.font='bold 16px "Courier New",monospace'; ctx.textAlign='center';
+        ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.6)';
+        ctx.strokeText(p.text, 0, 0);
+        ctx.fillStyle = p.color;
+        ctx.fillText(p.text, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.font='11px "Courier New",monospace'; ctx.textAlign='center';
+        ctx.fillStyle = p.color;
+        ctx.fillText(p.text, p.x, p.y - p.t/40);
+      }
       ctx.globalAlpha = 1;
     });
 
