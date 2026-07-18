@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#140d0a">
+<title>MONSTER CATAPULT - モンスター・カタパルト</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="カタパルト">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<style>
+:root{
+  --void:#0e0906; --glow:#3a2010;
+  --panel:#1c130d; --panel2:#26190f; --panel3:#301f12;
+  --stone:#5a4028; --stone-lt:#7a5838; --stone-dark:#2a1c12;
+  --ember:#ff7a3d; --ember2:#ff4d2b; --fire-grad:linear-gradient(180deg,#ffc172,#ff5a2b 55%,#d33f1c);
+  --blue-grad:linear-gradient(180deg,#8fd6f2,#3a9fd4 55%,#1f6f96);
+  --gold:#f0c04a; --gold-lt:#ffe9a8; --parchment:#f5e8d3; --dim:#a8927a; --dim2:#6b5844;
+  --danger:#e2483a; --ok:#7fd66f; --ice:#5fc7e0; --purple:#b06bd6;
+  --border:#4a3320; --border-lit:#8a6438;
+  --ink:#2a2018;
+}
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{
+  margin:0; padding:0; min-height:100%;
+  background:
+    radial-gradient(ellipse 700px 500px at 50% -10%, var(--glow) 0%, transparent 60%),
+    linear-gradient(180deg, #1a0f08 0%, var(--void) 40%);
+  color:var(--parchment);
+  font-family:"Hiragino Mincho ProN","Yu Mincho",Georgia,serif;
+  overscroll-behavior:none; user-select:none;
+}
+#app{ max-width:430px; margin:0 auto; min-height:100vh; display:flex; flex-direction:column; position:relative; padding-bottom:68px; }
+.hidden{ display:none !important; }
+
+/* ---------- 共通トップバー（通貨） ---------- */
+.topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 12px; gap:8px;
+}
+.logo{ font-size:15px; letter-spacing:.03em; text-shadow:0 2px 3px rgba(0,0,0,.6); }
+.logo b{ color:var(--ember); text-shadow:0 0 10px rgba(255,122,61,.5), 0 2px 3px rgba(0,0,0,.6); }
+.currency{
+  display:flex; align-items:center; gap:6px;
+  background:linear-gradient(180deg,#2a1c10,#160e08);
+  border:1px solid var(--border-lit); border-radius:20px; padding:4px 14px 4px 6px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 2px 4px rgba(0,0,0,.4);
+}
+.currency .coin{
+  width:20px; height:20px; border-radius:50%; flex:0 0 auto;
+  background:radial-gradient(circle at 32% 28%, #fff6d8, var(--gold) 55%, #a9791e 100%);
+  box-shadow:0 0 5px rgba(240,192,74,.7), inset 0 -2px 2px rgba(0,0,0,.25), inset 0 1px 1px rgba(255,255,255,.6);
+}
+.currency .val{ font-family:"Arial Black","Courier New",monospace; font-size:13.5px; color:var(--gold-lt); font-weight:bold; text-shadow:0 1px 2px rgba(0,0,0,.6); }
+
+/* ---------- 画面共通 ---------- */
+.screen{ flex:1; display:flex; flex-direction:column; padding:0 12px 12px; overflow-y:auto; }
+.screen-title{ font-size:14px; letter-spacing:.08em; color:var(--dim); margin:2px 2px 10px; display:flex; align-items:center; gap:6px; }
+.screen-title .bar{ flex:1; height:1px; background:linear-gradient(90deg, var(--border-lit), transparent); }
+
+/* ---------- ワールドマップ ---------- */
+#mapScroll{ position:relative; flex:1; min-height:520px; border:1px solid var(--border); border-radius:12px;
+  background:
+    radial-gradient(circle at 30% 15%, rgba(255,122,61,.14), transparent 45%),
+    radial-gradient(circle at 80% 85%, rgba(255,90,43,.10), transparent 40%),
+    linear-gradient(180deg, #231309 0%, #170d07 55%, #0e0906 100%);
+  box-shadow:inset 0 0 40px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.03);
+  overflow:hidden; padding:14px 0;
+}
+.world-label{
+  position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:3;
+  font-size:11.5px; letter-spacing:.1em; color:#fff0da; font-weight:bold;
+  background:linear-gradient(180deg,#6b3a1e,#3a1c0e); padding:5px 22px; border-radius:3px;
+  box-shadow:0 3px 0 #200f06, 0 4px 8px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.15);
+  border:1px solid #8a5228;
+}
+.world-label::before, .world-label::after{
+  content:''; position:absolute; top:2px; width:0; height:0;
+  border-top:12px solid #2a1409; border-bottom:12px solid transparent;
+}
+.world-label::before{ left:-10px; border-left:10px solid transparent; }
+.world-label::after{ right:-10px; border-right:10px solid transparent; }
+.map-path{ position:absolute; inset:0; }
+.stage-node{
+  position:absolute; width:54px; height:54px; margin-left:-27px; margin-top:-27px;
+  border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column;
+  background:radial-gradient(circle at 32% 26%, var(--stone-lt) 0%, var(--stone) 45%, var(--stone-dark) 100%);
+  border:2px solid #2a1a0e; cursor:pointer; z-index:2;
+  box-shadow:0 4px 0 rgba(0,0,0,.45), 0 6px 10px rgba(0,0,0,.4), inset 0 2px 3px rgba(255,255,255,.18), inset 0 -3px 5px rgba(0,0,0,.35);
+}
+.stage-node:active{ transform:translateY(2px); box-shadow:0 2px 0 rgba(0,0,0,.45), inset 0 2px 3px rgba(255,255,255,.18), inset 0 -3px 5px rgba(0,0,0,.35); }
+.stage-node.locked{ background:radial-gradient(circle at 32% 26%, #3a342c, #16130f 80%); border-color:#1c1712; cursor:default; box-shadow:0 3px 0 rgba(0,0,0,.4), inset 0 -3px 5px rgba(0,0,0,.4); }
+.stage-node.current{ border-color:var(--ember); box-shadow:0 4px 0 rgba(0,0,0,.45), 0 0 0 4px rgba(255,122,61,.22), 0 0 18px rgba(255,122,61,.6), inset 0 2px 3px rgba(255,255,255,.2); animation:nodepulse 1.8s ease-in-out infinite; }
+@keyframes nodepulse{ 0%,100%{ filter:brightness(1);} 50%{ filter:brightness(1.18);} }
+.stage-node .num{ font-size:17px; font-family:"Arial Black","Courier New",monospace; color:#fff2e0; text-shadow:0 2px 2px rgba(0,0,0,.6); }
+.stage-node.locked .num{ color:#5a5044; }
+.stage-node .stars{ font-size:8px; letter-spacing:1px; margin-top:1px; color:var(--gold); text-shadow:0 1px 1px rgba(0,0,0,.6); }
+.stage-node .lock-icon{ font-size:15px; filter:drop-shadow(0 1px 1px rgba(0,0,0,.6)); }
+.stage-node .boss-badge{
+  position:absolute; top:-9px; font-size:8.5px; font-weight:bold; letter-spacing:.05em;
+  background:linear-gradient(180deg,#ff6a52,var(--danger)); color:#fff; padding:2px 7px; border-radius:8px;
+  box-shadow:0 2px 0 #8f2418, 0 3px 5px rgba(0,0,0,.4); border:1px solid #ff9a86;
+}
+
+/* ---------- パネル/カード共通 ---------- */
+.panel{
+  background:linear-gradient(180deg, var(--panel2), var(--panel));
+  border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04), 0 2px 6px rgba(0,0,0,.25);
+}
+.panel-label{ font-size:11.5px; letter-spacing:.06em; color:var(--dim); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; }
+
+/* ---------- モンスターカード ---------- */
+.monster-card{
+  display:flex; gap:10px; background:linear-gradient(180deg, var(--panel3), var(--panel2));
+  border:1px solid var(--border); border-radius:10px;
+  padding:10px; margin-bottom:8px; align-items:center;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 2px 5px rgba(0,0,0,.3);
+}
+.monster-card.locked{ opacity:.55; }
+.m-icon{
+  width:54px; height:54px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  font-size:26px; background-size:cover; background-position:center;
+  box-shadow:inset 0 0 12px rgba(0,0,0,.5), inset 0 2px 3px rgba(255,255,255,.15), 0 2px 4px rgba(0,0,0,.4);
+  border:2px solid rgba(255,255,255,.08);
+}
+.m-body{ flex:1; min-width:0; }
+.m-head{ display:flex; justify-content:space-between; align-items:baseline; gap:6px; }
+.m-name{ font-size:13.5px; letter-spacing:.02em; font-weight:bold; }
+.m-lv{ font-size:10.5px; color:var(--gold); font-family:"Courier New",monospace; font-weight:bold; }
+.m-special{ font-size:10.5px; color:var(--ember); margin:3px 0 6px; line-height:1.4; }
+.stat-row{ display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+.stat-row .stat-label{ font-size:9px; color:var(--dim); width:34px; flex:0 0 auto; letter-spacing:.05em; }
+.stat-bar{
+  flex:1; height:6px; border-radius:3px; background:#00000066; overflow:hidden;
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.6);
+  background-image:repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(0,0,0,.35) calc(10% - 1px) 10%);
+}
+.stat-bar-fill{ height:100%; border-radius:3px; box-shadow:inset 0 1px 0 rgba(255,255,255,.3); }
+.stat-bar-fill.power{ background:linear-gradient(90deg,#ff8a5a,var(--ember2)); }
+.stat-bar-fill.weight{ background:linear-gradient(90deg,#8ab0d6,#4a6a94); }
+.m-action{ flex:0 0 auto; text-align:center; }
+.m-action .btn{ padding:8px 11px; font-size:11px; margin:0; white-space:nowrap; }
+.m-action .cost{ font-size:10.5px; color:var(--gold); margin-top:5px; font-family:"Courier New",monospace; font-weight:bold; }
+
+/* ---------- ボタン（立体ベベル） ---------- */
+.btn{
+  font-family:inherit; letter-spacing:.05em; font-size:13px;
+  background:var(--fire-grad); color:#4a1e08; font-weight:bold;
+  border:1px solid #a83c17; border-radius:8px;
+  padding:11px 16px; cursor:pointer; margin-bottom:8px;
+  box-shadow:0 3px 0 #a03216, 0 5px 8px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.4);
+  text-shadow:0 1px 0 rgba(255,255,255,.25);
+  transition:transform .05s;
+}
+.btn:active{ filter:brightness(.95); transform:translateY(2px); box-shadow:0 1px 0 #a03216, inset 0 1px 0 rgba(255,255,255,.4); }
+.btn-ghost{
+  background:linear-gradient(180deg,#3a281a,#241608); border:1px solid var(--border);
+  color:var(--parchment); font-weight:normal; box-shadow:0 3px 0 #120a04, inset 0 1px 0 rgba(255,255,255,.06);
+  text-shadow:none;
+}
+.btn-ghost:active{ box-shadow:0 1px 0 #120a04; }
+.btn-full{ width:100%; }
+.btn:disabled{ opacity:.4; filter:grayscale(.5); cursor:default; box-shadow:none; transform:none; }
+
+/* ---------- ミッション ---------- */
+.mission-card{
+  background:linear-gradient(180deg, var(--panel3), var(--panel2)); border:1px solid var(--border); border-radius:10px;
+  padding:10px 12px; margin-bottom:8px; box-shadow:0 2px 5px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.mission-card.done{ border-color:var(--ok); box-shadow:0 0 0 1px rgba(127,214,111,.3), 0 2px 5px rgba(0,0,0,.3); }
+.mission-text{ font-size:12.5px; margin-bottom:6px; display:flex; justify-content:space-between; gap:6px; font-weight:bold; }
+.mission-reward{ color:var(--gold); font-size:11px; white-space:nowrap; font-family:"Courier New",monospace; }
+.progress-bar{ height:8px; border-radius:4px; background:#00000066; overflow:hidden; margin-bottom:6px; box-shadow:inset 0 1px 2px rgba(0,0,0,.6); }
+.progress-fill{ height:100%; background:linear-gradient(180deg,#8fd6f2,#3a9fd4); width:0%; transition:width .3s; box-shadow:inset 0 1px 0 rgba(255,255,255,.4); }
+.mission-foot{ display:flex; justify-content:space-between; align-items:center; }
+.mission-foot .count{ font-size:10.5px; color:var(--dim); font-family:"Courier New",monospace; }
+.claim-btn{ font-size:11px; padding:6px 14px; margin:0; }
+
+/* ---------- タブ ---------- */
+.tabs{ display:flex; gap:6px; margin-bottom:10px; }
+.tab{ flex:1; text-align:center; padding:8px 4px; border-radius:6px; background:var(--panel2); border:1px solid var(--border); font-size:12px; cursor:pointer; }
+.tab.active{ border-color:var(--ember); color:var(--ember); background:var(--panel3); }
+
+/* ---------- ゲーム画面 ---------- */
+#screen-game{ padding:0; display:flex; flex-direction:column; }
+.game-hud{ display:flex; justify-content:space-between; align-items:flex-start; padding:10px 10px 0; position:relative; z-index:5; }
+.hud-left{ display:flex; align-items:center; gap:8px; }
+.pause-btn{
+  width:34px; height:34px; border-radius:9px; flex:0 0 auto;
+  background:linear-gradient(180deg,#3a281a,#1c1108); border:1px solid #100a04;
+  display:flex; align-items:center; justify-content:center; font-size:13px; cursor:pointer; color:#fff;
+  box-shadow:0 3px 0 #0c0703, inset 0 1px 0 rgba(255,255,255,.12);
+}
+.hud-pill{
+  background:linear-gradient(180deg,#fff8ec,#e8dcc4); color:var(--ink); border-radius:20px;
+  padding:5px 14px; box-shadow:0 3px 0 rgba(0,0,0,.3), inset 0 1px 0 #fff, inset 0 -2px 3px rgba(0,0,0,.08);
+  text-align:center; min-width:64px;
+}
+.hud-pill .label{ font-size:8px; letter-spacing:.09em; color:#8a7458; font-weight:bold; display:block; }
+.hud-pill .value{ font-size:15px; font-family:"Arial Black","Courier New",monospace; font-weight:bold; line-height:1.15; }
+.hud-pill.stage-pill{ text-align:left; padding:5px 12px; }
+.hud-pill.stage-pill .value{ font-size:12.5px; }
+.hud-pill.stage-pill .stars{ color:var(--gold); font-size:9px; letter-spacing:1px; display:block; }
+.hud-center .hud-pill .value{ color:var(--danger); }
+.hud-right{ display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+.hud-right .hud-pill{ min-width:78px; }
+.hud-right .hud-pill.score .value{ color:#b8830f; }
+
+#canvasWrap{ position:relative; width:100%; aspect-ratio:390/460; background:#0d0906; overflow:hidden; margin-top:-6px; }
+canvas{ display:block; width:100%; height:100%; touch-action:none; }
+
+.game-footer{ display:flex; align-items:center; gap:8px; padding:8px 10px 14px; }
+.next-panel{
+  flex:1; display:flex; align-items:center; gap:6px;
+  background:linear-gradient(180deg,#1c1108,#120a05); border:1px solid var(--border); border-radius:10px;
+  padding:6px 8px; overflow-x:auto; box-shadow:inset 0 2px 4px rgba(0,0,0,.5);
+}
+.next-panel .cap{ font-size:9px; color:var(--dim); letter-spacing:.05em; flex:0 0 auto; font-weight:bold; }
+.next-chip{
+  position:relative; width:32px; height:32px; border-radius:50%; flex:0 0 auto;
+  background:radial-gradient(circle at 32% 26%, #3a281a, #1c1108 80%);
+  border:1px solid var(--border-lit); display:flex; align-items:center; justify-content:center; font-size:15px;
+  box-shadow:inset 0 1px 2px rgba(255,255,255,.1), 0 2px 3px rgba(0,0,0,.4);
+}
+.next-chip .qty{
+  position:absolute; bottom:-4px; right:-4px; background:linear-gradient(180deg,#ff6a52,var(--ember2));
+  color:#fff; font-size:8.5px; font-weight:bold; border-radius:8px; padding:1px 5px;
+  font-family:"Courier New",monospace; box-shadow:0 1px 0 #8f2418, 0 0 0 1.5px #1c1108;
+}
+.mini-btn{
+  width:46px; height:46px; border-radius:10px; flex:0 0 auto; cursor:pointer;
+  background:linear-gradient(180deg,#3a281a,#1c1108); border:1px solid #100a04;
+  font-size:12px; display:flex; align-items:center; justify-content:center; color:var(--parchment);
+  box-shadow:0 3px 0 #0c0703, inset 0 1px 0 rgba(255,255,255,.1);
+}
+.mini-btn:active{ transform:translateY(2px); box-shadow:0 1px 0 #0c0703; }
+.mini-btn.speed{ background:var(--blue-grad); color:#0a2a38; font-weight:bold; border-color:#1a6a8a; box-shadow:0 3px 0 #185870, inset 0 1px 0 rgba(255,255,255,.4); text-shadow:0 1px 0 rgba(255,255,255,.3); }
+.mini-btn.fire{ background:var(--fire-grad); border-color:#a83c17; box-shadow:0 3px 0 #a03216, inset 0 1px 0 rgba(255,255,255,.4); font-size:16px; }
+.mini-btn.fire.active{ box-shadow:0 1px 0 #a03216, 0 0 0 3px rgba(255,122,61,.35); transform:translateY(2px); }
+
+/* ---------- 結果オーバーレイ ---------- */
+.overlay{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(6,4,3,.88); z-index:60; padding:20px; }
+.overlay.hidden{ display:none; }
+.overlay-box{
+  background:linear-gradient(180deg,var(--panel2),var(--panel)); border:1px solid var(--border-lit); border-radius:14px;
+  padding:22px 20px; text-align:center; max-width:320px; width:100%;
+  box-shadow:0 10px 30px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.overlay-box h2{ font-size:21px; font-weight:bold; letter-spacing:.06em; margin:4px 0 4px; text-shadow:0 2px 3px rgba(0,0,0,.5); }
+.overlay-box h2.win{ color:var(--gold); }
+.overlay-box h2.lose{ color:var(--danger); }
+.result-stars{ font-size:26px; letter-spacing:8px; margin:8px 0; color:#4a3a28; }
+.result-stars .lit{ color:var(--gold); text-shadow:0 0 10px rgba(240,192,74,.7); }
+.overlay-box .stat-line{ display:flex; justify-content:space-around; margin:12px 0; }
+.overlay-box .stat-line div{ text-align:center; }
+.overlay-box .stat-line .label{ font-size:9.5px; color:var(--dim); display:block; }
+.overlay-box .stat-line .value{ font-size:17px; font-family:"Courier New",monospace; color:var(--gold); display:block; margin-top:2px; font-weight:bold; }
+.overlay-box p.desc{ font-size:11.5px; color:var(--dim); line-height:1.6; margin:6px 0 14px; }
+
+/* ---------- 下部ナビ ---------- */
+.bottom-nav{
+  position:fixed; left:0; right:0; bottom:0; max-width:430px; margin:0 auto;
+  display:flex; background:linear-gradient(180deg,#1c130d,#140d08); border-top:1px solid var(--border-lit); z-index:20;
+  box-shadow:0 -4px 12px rgba(0,0,0,.4);
+}
+.nav-item{ position:relative; flex:1; text-align:center; padding:8px 2px 7px; cursor:pointer; color:var(--dim); }
+.nav-item.active{ color:var(--ember); }
+.nav-item.active .icon{ filter:drop-shadow(0 0 5px rgba(255,122,61,.7)); }
+.nav-item .icon{ font-size:19px; display:block; }
+.nav-item .txt{ font-size:9.5px; margin-top:2px; letter-spacing:.02em; }
+.nav-dot{ position:absolute; margin-left:14px; margin-top:-2px; width:7px; height:7px; border-radius:50%; background:var(--danger); box-shadow:0 0 4px rgba(226,72,58,.8); }
+
+.ranking-list{ list-style:none; margin:0 0 10px; padding:0; }
+.ranking-list li{ display:flex; justify-content:space-between; padding:7px 4px; font-size:12.5px; border-bottom:1px solid var(--border); }
+.ranking-list li .rank{ color:var(--gold); width:26px; flex:0 0 auto; font-weight:bold; }
+.ranking-list .dim{ color:var(--dim); text-align:center; justify-content:center; }
+.text-input{ width:100%; padding:9px 10px; border-radius:6px; border:1px solid var(--border); background:var(--panel2); color:var(--parchment); font-family:inherit; font-size:13px; margin-bottom:8px; box-shadow:inset 0 1px 3px rgba(0,0,0,.5); }
+.footnote{ font-size:10px; color:var(--dim2); text-align:center; line-height:1.6; padding:6px 4px 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== 共通トップバー ===================== -->
+  <div class="topbar" id="topbar">
+    <div class="logo">🎯 <b>MONSTER</b> CATAPULT</div>
+    <div class="currency"><span class="coin"></span><span class="val" id="goldTop">0</span></div>
+  </div>
+
+  <!-- ===================== ステージ（ワールドマップ） ===================== -->
+  <section id="screen-map" class="screen">
+    <div class="screen-title">ステージ選択<div class="bar"></div></div>
+    <div id="mapScroll">
+      <div class="world-label">WORLD 1・火山の丘</div>
+      <div class="map-path" id="mapPath"></div>
+    </div>
+  </section>
+
+  <!-- ===================== モンスター（図鑑） ===================== -->
+  <section id="screen-monsters" class="screen hidden">
+    <div class="screen-title">モンスター図鑑<div class="bar"></div></div>
+    <div id="monsterList"></div>
+  </section>
+
+  <!-- ===================== ショップ ===================== -->
+  <section id="screen-shop" class="screen hidden">
+    <div class="screen-title">ショップ<div class="bar"></div></div>
+    <div id="shopList"></div>
+  </section>
+
+  <!-- ===================== ミッション ===================== -->
+  <section id="screen-missions" class="screen hidden">
+    <div class="screen-title">デイリーミッション<div class="bar"></div></div>
+    <p class="footnote" style="margin-bottom:8px;">毎日0時に更新されます（この試作版では日付が変わると自動更新）</p>
+    <div id="missionList"></div>
+  </section>
+
+  <!-- ===================== ランキング ===================== -->
+  <section id="screen-ranking" class="screen hidden">
+    <div class="screen-title">オンラインランキング<div class="bar"></div></div>
+    <div class="panel">
+      <div class="panel-label">🏆 合計スコア TOP10</div>
+      <ol class="ranking-list" id="rankingList"><li class="dim">読み込み中…</li></ol>
+      <button class="btn btn-ghost btn-full" id="refreshRankingBtn">再読み込み</button>
+    </div>
+    <div class="panel">
+      <div class="panel-label">📮 自分の合計スコアを送信</div>
+      <div class="stat-line" style="margin:0 0 10px;"><div><span class="label">現在の合計スコア</span><span class="value" id="myTotalScore">0</span></div></div>
+      <input id="nameInput" maxlength="12" placeholder="冒険者の名前" class="text-input">
+      <button class="btn btn-full" id="submitScoreBtn">ランキングに送信</button>
+    </div>
+  </section>
+
+  <!-- ===================== ゲーム画面 ===================== -->
+  <section id="screen-game" class="screen hidden" style="padding-bottom:0;">
+    <div class="game-hud">
+      <div class="hud-left">
+        <div class="pause-btn" id="pauseBtn">⏸</div>
+        <div class="hud-pill stage-pill">STAGE <span id="stageLabel">1</span><span class="stars" id="stageStarsHud">☆☆☆</span></div>
+      </div>
+      <div class="hud-center"><div class="hud-pill"><span class="label">ENEMIES</span><span class="value" id="enemyVal">0/0</span></div></div>
+      <div class="hud-right">
+        <div class="hud-pill"><span class="label">SHOTS</span><span class="value" id="ammoVal">0</span></div>
+        <div class="hud-pill score"><span class="label">SCORE</span><span class="value" id="scoreVal">0</span></div>
+      </div>
+    </div>
+    <div id="canvasWrap"><canvas id="game" width="390" height="460"></canvas></div>
+    <div class="game-footer">
+      <div class="next-panel"><span class="cap">NEXT</span><div id="queueTray" style="display:flex; gap:6px;"></div></div>
+      <div class="mini-btn" id="skipBtn">⏭</div>
+      <div class="mini-btn speed" id="speedBtn">x1</div>
+      <div class="mini-btn fire" id="hintBtn" title="狙いの軌道プレビュー">🔥</div>
+    </div>
+  </section>
+
+  <div class="bottom-nav" id="bottomNav">
+    <div class="nav-item" data-nav="shop"><span class="icon">🛒</span><span class="txt">ショップ</span></div>
+    <div class="nav-item" data-nav="monsters"><span class="icon">👾</span><span class="txt">モンスター</span></div>
+    <div class="nav-item active" data-nav="map"><span class="icon">🗺️</span><span class="txt">ステージ</span></div>
+    <div class="nav-item" data-nav="missions"><span class="icon">📋</span><span class="txt">ミッション</span><span class="nav-dot hidden" id="missionDot"></span></div>
+    <div class="nav-item" data-nav="ranking"><span class="icon">🏆</span><span class="txt">ランキング</span></div>
+  </div>
+
+  <div class="overlay hidden" id="overlay">
+    <div class="overlay-box">
+      <h2 id="overlayTitle"></h2>
+      <div class="result-stars" id="overlayStars"></div>
+      <div class="stat-line">
+        <div><span class="label">獲得スコア</span><span class="value" id="overlayScore">0</span></div>
+        <div><span class="label">獲得ゴールド</span><span class="value" id="overlayGold">0</span></div>
+      </div>
+      <p class="desc" id="overlayText"></p>
+      <button class="btn btn-full" id="overlayPrimaryBtn">次へ</button>
+      <button class="btn btn-ghost btn-full" id="overlaySecondaryBtn">タイトルへ戻る</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ==========================================================
+   mc-firebase.js — オンラインランキング連携（任意設定）
+   下の firebaseConfig にプロジェクト情報を入れると自動的に有効化されます。
+   未設定のままでもゲームは問題なく動作します（ランキング機能のみ無効）。
+   ========================================================== */
+(function(){
+  'use strict';
+  const firebaseConfig = {
+    apiKey:"", authDomain:"", projectId:"", storageBucket:"", messagingSenderId:"", appId:"",
+  };
+  if(!firebaseConfig.apiKey){ return; }
+
+  const V = '10.12.2';
+  Promise.all([
+    import(`https://www.gstatic.com/firebasejs/${V}/firebase-app.js`),
+    import(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore.js`),
+  ]).then(([appMod, fsMod])=>{
+    const app = appMod.initializeApp(firebaseConfig);
+    const db = fsMod.getFirestore(app);
+    const { collection, addDoc, query, orderBy, limit, getDocs } = fsMod;
+    window.CatapultFirebase = {
+      submitScore(name, score, onOk, onErr){
+        addDoc(collection(db,'scores'), {name:String(name).slice(0,12), score:Number(score)||0, createdAt:Date.now()})
+          .then(()=> onOk && onOk()).catch(e=> onErr && onErr(e));
+      },
+      fetchTopScores(onOk, onErr){
+        const q = query(collection(db,'scores'), orderBy('score','desc'), limit(10));
+        getDocs(q).then(snap=>{
+          const list=[]; snap.forEach(d=> list.push(d.data()));
+          onOk && onOk(list);
+        }).catch(e=> onErr && onErr(e));
+      }
+    };
+  }).catch(()=>{ window.CatapultFirebase = null; });
+})();
+/* 推奨Firestoreルール:
+rules_version='2';
+service cloud.firestore{
+  match /databases/{database}/documents{
+    match /scores/{doc}{
+      allow read:if true;
+      allow create:if request.resource.data.score is number
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() <= 12;
+    }
+  }
+}
+*/
+
+</script>
+<script>
+/* ==========================================================
+   mc-game.js — MONSTER CATAPULT 本体ロジック
+   ========================================================== */
+(function(){
+  'use strict';
+
+  // ---------- 安全なローカル保存 ----------
+  const Storage = {
+    get(key, fallback){
+      try{ const v = localStorage.getItem(key); return v===null ? fallback : JSON.parse(v); }
+      catch(e){ return fallback; }
+    },
+    set(key, value){ try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){} }
+  };
+
+  // ---------- 定数 ----------
+  const TOTAL_STAGES = 10;
+  const LEVEL_MAX = 5;
+  const BASE_THRESHOLD = 2.3;
+
+  const MONSTER_DEFS = {
+    slime:    {name:'スライム',        emoji:'🟢', color:'#7bd66b', special:'split',   specialText:'着弾すると3体に分裂し、周囲へ被害を広げる',
+               radius:11, density:0.0016, restitution:0.30, friction:0.5,
+               basePower:2, baseWeight:2, ownedDefault:true,  unlockCost:0,   levelBase:120},
+    dragon:   {name:'ファイアドラゴン', emoji:'🐉', color:'#e0533f', special:'explode', specialText:'着弾で爆発し、範囲内の敵を一掃する',
+               radius:13, density:0.0026, restitution:0.22, friction:0.5,
+               basePower:4, baseWeight:3, ownedDefault:true,  unlockCost:0,   levelBase:220},
+    icegolem: {name:'アイスゴーレム',   emoji:'❄️', color:'#5fc7e0', special:'freeze',  specialText:'着弾で周囲の敵を凍結させ、動きを止める',
+               radius:12, density:0.0022, restitution:0.20, friction:0.5,
+               basePower:3, baseWeight:4, ownedDefault:true,  unlockCost:0,   levelBase:220},
+    spikeball:{name:'スパイクボール',   emoji:'🟣', color:'#b06bd6', special:'bounce',  specialText:'弾みやすく、何度も跳ねて多段ヒットしやすい',
+               radius:9,  density:0.0012, restitution:0.72, friction:0.35,
+               basePower:3, baseWeight:2, ownedDefault:true,  unlockCost:0,   levelBase:150},
+    skeleton: {name:'スケルトンナイト', emoji:'💀', color:'#c9c3b0', special:'heavy',   specialText:'質量が大きく、構造物を力任せに突き崩す',
+               radius:12, density:0.0045, restitution:0.12, friction:0.6,
+               basePower:3, baseWeight:5, ownedDefault:false, unlockCost:600, levelBase:260},
+    centaur:  {name:'ウィンドケンタウルス', emoji:'🏹', color:'#4fa8e0', special:'pierce', specialText:'飛行中に浮力がかかり、伸びのある低伸弾道で貫通する',
+               radius:9,  density:0.0020, restitution:0.20, friction:0.4,
+               basePower:2, baseWeight:2, ownedDefault:false, unlockCost:900, levelBase:300},
+  };
+  const MONSTER_ORDER = ['slime','dragon','icegolem','spikeball','skeleton','centaur'];
+
+  const MISSION_POOL = [
+    {id:'kill_total_5', text:'モンスターを合計5体撃破する',            target:5,   track:'anyKill',      reward:100},
+    {id:'kill_fire_3',  text:'ファイアドラゴンで敵を3体撃破する',      target:3,   track:'type:dragon',   reward:120},
+    {id:'explode_2',    text:'爆発で敵を2体撃破する',                  target:2,   track:'explosionKill', reward:120},
+    {id:'clear_stage_2',text:'ステージを2回クリアする',                target:2,   track:'stageClear',    reward:150},
+    {id:'combo_1',      text:'1ターンで敵を2体同時に撃破する',        target:1,   track:'combo',         reward:100},
+    {id:'leftover_1',   text:'弾を1発以上残してステージをクリアする',  target:1,   track:'leftover',      reward:100},
+  ];
+
+  // ---------- 画像アセット差し込み口（未設定なら自動的にCanvas/絵文字描画にフォールバック） ----------
+  // 実際のイラスト素材が用意できたら、下のパスにファイル名を設定するだけで自動的に使用されます。
+  // 例）background: 'assets/bg-volcano.jpg', monsters:{ slime:'assets/monster-slime.png', ... }
+  const IMAGE_ASSETS = {
+    background: null,   // ステージ背景（推奨: 390x460以上, jpg/png）
+    block: null,         // 砦ブロックのテクスチャ（推奨: 正方形, png）
+    enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
+    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 128x128, png/透過）
+      slime:null, dragon:null, icegolem:null, spikeball:null, skeleton:null, centaur:null,
+    },
+  };
+  const loadedImages = { monsters:{} };
+  function preloadImages(){
+    const tryLoad = (key, path, target)=>{
+      if(!path) return;
+      const img = new Image();
+      img.onload = ()=>{ target[key] = img; };
+      img.onerror = ()=>{ /* 読み込み失敗時は既存のCanvas/絵文字描画のまま */ };
+      img.src = path;
+    };
+    tryLoad('background', IMAGE_ASSETS.background, loadedImages);
+    tryLoad('block', IMAGE_ASSETS.block, loadedImages);
+    tryLoad('enemy', IMAGE_ASSETS.enemy, loadedImages);
+    MONSTER_ORDER.forEach(k=> tryLoad(k, IMAGE_ASSETS.monsters[k], loadedImages.monsters));
+  }
+  // DOM側（モンスターカード等）で画像を使う場合のCSS背景ヘルパー
+  function monsterIconStyle(key){
+    const path = IMAGE_ASSETS.monsters[key];
+    return path ? `background-image:url('${path}'); background-size:cover; background-position:center;` : '';
+  }
+
+  const ANCHOR = {x:60, y:360};
+  const GROUND_Y = 440;
+  const MAX_PULL = 78;
+  const LAUNCH_SCALE = 0.17;
+  const TURN_DURATION = 3400;
+  const W = 390, H = 460;
+
+  // ---------- プレイヤー永続状態 ----------
+  function defaultState(){
+    const monsters = {};
+    MONSTER_ORDER.forEach(k=>{
+      monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault ? 1 : 0 };
+    });
+    return { gold: 300, monsters, stages: {}, totalScore: 0 };
+  }
+  let state = Object.assign(defaultState(), Storage.get('mc_state', {}));
+  // 深いマージ漏れ対策（旧セーブに新モンスターが無い場合を補完）
+  MONSTER_ORDER.forEach(k=>{ if(!state.monsters[k]) state.monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault?1:0 }; });
+  function saveState(){ Storage.set('mc_state', state); }
+
+  function levelUpCost(key){
+    const lv = state.monsters[key].level || 0;
+    return Math.round(MONSTER_DEFS[key].levelBase * Math.pow(1.55, Math.max(0,lv-1)));
+  }
+  function levelMult(key){
+    if(!key) return 1;
+    const lv = state.monsters[key] ? (state.monsters[key].level||1) : 1;
+    return 1 + (lv-1)*0.15;
+  }
+
+  // ---------- ミッション ----------
+  function todayKey(){ return new Date().toDateString(); }
+  function seedFromDate(){
+    const d = new Date();
+    return d.getFullYear()*372 + (d.getMonth()+1)*31 + d.getDate();
+  }
+  function pickTodayMissionIds(){
+    const seed = seedFromDate();
+    const pool = MISSION_POOL.map((m,i)=>i);
+    // シンプルな決定的シャッフル
+    for(let i=pool.length-1;i>0;i--){
+      const j = (seed * (i+7) + i*13) % (i+1);
+      [pool[i],pool[j]] = [pool[j],pool[i]];
+    }
+    return pool.slice(0,3).map(i=>MISSION_POOL[i].id);
+  }
+  let missionState = Storage.get('mc_missions', null);
+  if(!missionState || missionState.dateKey !== todayKey()){
+    missionState = { dateKey: todayKey(), items: pickTodayMissionIds().map(id=>({id, progress:0, claimed:false})) };
+    Storage.set('mc_missions', missionState);
+  }
+  function bumpMissionTrack(track, amount){
+    let changed = false;
+    missionState.items.forEach(item=>{
+      const def = MISSION_POOL.find(m=>m.id===item.id);
+      if(def && def.track===track && item.progress < def.target){
+        item.progress = Math.min(def.target, item.progress + amount);
+        changed = true;
+      }
+    });
+    if(changed){ Storage.set('mc_missions', missionState); refreshMissionDot(); if(!screens.missions.classList.contains('hidden')) renderMissions(); }
+  }
+  function refreshMissionDot(){
+    const claimable = missionState.items.some(it=>{
+      const def = MISSION_POOL.find(m=>m.id===it.id);
+      return def && it.progress>=def.target && !it.claimed;
+    });
+    document.getElementById('missionDot').classList.toggle('hidden', !claimable);
+  }
+
+  // ---------- DOM ----------
+  const el = id => document.getElementById(id);
+  const screens = {
+    map: el('screen-map'), monsters: el('screen-monsters'), shop: el('screen-shop'),
+    missions: el('screen-missions'), ranking: el('screen-ranking'), game: el('screen-game'),
+  };
+  const topbar = el('topbar'), bottomNav = el('bottomNav');
+  const goldTopEl = el('goldTop');
+  const overlayEl = el('overlay'), overlayTitleEl = el('overlayTitle'), overlayStarsEl = el('overlayStars');
+  const overlayScoreEl = el('overlayScore'), overlayGoldEl = el('overlayGold'), overlayTextEl = el('overlayText');
+  const overlayPrimaryEl = el('overlayPrimaryBtn'), overlaySecondaryEl = el('overlaySecondaryBtn');
+
+  function refreshTopbar(){ goldTopEl.textContent = state.gold; }
+
+  function showScreen(name){
+    Object.keys(screens).forEach(k=> screens[k].classList.toggle('hidden', k!==name));
+    const isGame = name==='game';
+    topbar.classList.toggle('hidden', isGame);
+    bottomNav.classList.toggle('hidden', isGame);
+    document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.nav===name));
+    if(name==='map') renderMap();
+    if(name==='monsters') renderMonsters();
+    if(name==='shop') renderShop();
+    if(name==='missions') renderMissions();
+    if(name==='ranking'){ el('myTotalScore').textContent = state.totalScore; loadRanking(); }
+    refreshTopbar();
+  }
+  document.querySelectorAll('.nav-item').forEach(item=>{
+    item.addEventListener('click', ()=> showScreen(item.dataset.nav));
+  });
+
+  // ---------- ワールドマップ ----------
+  function unlockedUpTo(){
+    let n = 1;
+    while(n < TOTAL_STAGES && state.stages[n] && state.stages[n].cleared) n++;
+    return n;
+  }
+  function renderMap(){
+    const wrap = el('mapScroll');
+    wrap.style.position = 'relative';
+    const pathEl = el('mapPath');
+    const unlocked = unlockedUpTo();
+    const pts = [];
+    let html = '';
+    for(let i=0;i<TOTAL_STAGES;i++){
+      const n = i+1;
+      const topPct = 90 - i*7.6;
+      const xPct = 50 + Math.sin(i*1.15)*28;
+      pts.push([xPct, topPct]);
+      const st = state.stages[n];
+      const locked = n > unlocked;
+      const current = n === unlocked && !(st && st.cleared);
+      const stars = st ? st.stars : 0;
+      const starStr = '★★★'.slice(0,stars) + '☆☆☆'.slice(0, 3-stars);
+      html += `<div class="stage-node ${locked?'locked':''} ${current?'current':''}" data-stage="${n}"
+                 style="left:${xPct}%; top:${topPct}%;">
+                 ${n%5===0?'<div class="boss-badge">BOSS</div>':''}
+                 ${locked ? '<div class="lock-icon">🔒</div>' : `<div class="num">${n}</div><div class="stars">${starStr}</div>`}
+               </div>`;
+    }
+    const svgPoints = pts.map(p=>p[0]+','+p[1]).join(' ');
+    pathEl.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
+      <polyline points="${svgPoints}" fill="none" stroke="#4a3320" stroke-width="1.2" stroke-dasharray="2,2"/>
+    </svg>` + html;
+    pathEl.querySelectorAll('.stage-node').forEach(node=>{
+      node.addEventListener('click', ()=>{
+        const n = parseInt(node.dataset.stage, 10);
+        if(n <= unlocked) enterStage(n);
+      });
+    });
+  }
+
+  // ---------- モンスターカード共通描画 ----------
+  function buildMonsterCard(key, mode){
+    const def = MONSTER_DEFS[key];
+    const info = state.monsters[key];
+    const owned = info.owned;
+    const level = info.level || 0;
+    const powerPct = Math.min(100, ((def.basePower + (level-1)*0.6) / 6) * 100);
+    const weightPct = Math.min(100, (def.baseWeight/6)*100);
+
+    let actionHtml = '';
+    if(mode==='shop'){
+      if(!owned){
+        actionHtml = `<div class="m-action"><button class="btn" data-buy="${key}">解放する</button><div class="cost">${def.unlockCost}G</div></div>`;
+      } else if(level>=LEVEL_MAX){
+        actionHtml = `<div class="m-action"><button class="btn btn-ghost" disabled>MAX Lv</button></div>`;
+      } else {
+        actionHtml = `<div class="m-action"><button class="btn" data-levelup="${key}">強化する</button><div class="cost">${levelUpCost(key)}G</div></div>`;
+      }
+    }
+
+    const hasImg = owned && IMAGE_ASSETS.monsters[key];
+    const iconStyle = `background:${def.color}33;border:1px solid ${def.color};` + (hasImg ? monsterIconStyle(key) : '');
+    return `<div class="monster-card ${owned?'':'locked'}">
+      <div class="m-icon" style="${iconStyle}">${hasImg?'':(owned?def.emoji:'🔒')}</div>
+      <div class="m-body">
+        <div class="m-head"><span class="m-name">${def.name}</span><span class="m-lv">${owned?('Lv.'+level):'未解放'}</span></div>
+        <div class="m-special">${def.specialText}</div>
+        <div class="stat-row"><span class="stat-label">パワー</span><div class="stat-bar"><div class="stat-bar-fill power" style="width:${powerPct}%"></div></div></div>
+        <div class="stat-row"><span class="stat-label">重さ</span><div class="stat-bar"><div class="stat-bar-fill weight" style="width:${weightPct}%"></div></div></div>
+      </div>
+      ${actionHtml}
+    </div>`;
+  }
+
+  function renderMonsters(){
+    el('monsterList').innerHTML = MONSTER_ORDER.map(k=> buildMonsterCard(k,'view')).join('');
+  }
+
+  function renderShop(){
+    const wrap = el('shopList');
+    wrap.innerHTML = MONSTER_ORDER.map(k=> buildMonsterCard(k,'shop')).join('');
+    wrap.querySelectorAll('[data-buy]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const key = btn.dataset.buy;
+        const cost = MONSTER_DEFS[key].unlockCost;
+        if(state.gold < cost) return;
+        state.gold -= cost;
+        state.monsters[key].owned = true;
+        state.monsters[key].level = 1;
+        saveState(); renderShop(); refreshTopbar();
+      });
+    });
+    wrap.querySelectorAll('[data-levelup]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const key = btn.dataset.levelup;
+        const cost = levelUpCost(key);
+        if(state.gold < cost) return;
+        state.gold -= cost;
+        state.monsters[key].level = Math.min(LEVEL_MAX, (state.monsters[key].level||1) + 1);
+        saveState(); renderShop(); refreshTopbar();
+      });
+    });
+  }
+
+  // ---------- ミッション画面 ----------
+  function renderMissions(){
+    const wrap = el('missionList');
+    wrap.innerHTML = missionState.items.map(item=>{
+      const def = MISSION_POOL.find(m=>m.id===item.id);
+      const pct = Math.min(100, Math.round((item.progress/def.target)*100));
+      const done = item.progress >= def.target;
+      const claimBtn = item.claimed
+        ? `<span class="count">受取済み</span>`
+        : done
+          ? `<button class="btn claim-btn" data-claim="${item.id}">受け取る</button>`
+          : `<span class="count">${item.progress}/${def.target}</span>`;
+      return `<div class="mission-card ${done?'done':''}">
+        <div class="mission-text"><span>${def.text}</span><span class="mission-reward">+${def.reward}G</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div class="mission-foot">${claimBtn}</div>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('[data-claim]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.dataset.claim;
+        const item = missionState.items.find(i=>i.id===id);
+        const def = MISSION_POOL.find(m=>m.id===id);
+        if(!item || item.claimed) return;
+        item.claimed = true;
+        state.gold += def.reward;
+        saveState(); Storage.set('mc_missions', missionState);
+        refreshTopbar(); refreshMissionDot(); renderMissions();
+      });
+    });
+    refreshMissionDot();
+  }
+
+  // ---------- ランキング ----------
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function loadRanking(){
+    const listEl = el('rankingList');
+    listEl.innerHTML = '<li class="dim">読み込み中…</li>';
+    if(window.CatapultFirebase && window.CatapultFirebase.fetchTopScores){
+      window.CatapultFirebase.fetchTopScores(list=>{
+        if(!list || !list.length){ listEl.innerHTML = '<li class="dim">まだ記録がありません</li>'; return; }
+        listEl.innerHTML = list.map((r,i)=>`<li><span class="rank">${i+1}</span><span>${escapeHtml(r.name)}</span><span>${r.score}</span></li>`).join('');
+      }, ()=>{ listEl.innerHTML = '<li class="dim">取得に失敗しました</li>'; });
+    } else {
+      listEl.innerHTML = '<li class="dim">Firebase未設定です（mc-firebase.js にプロジェクト情報を設定してください）</li>';
+    }
+  }
+  el('refreshRankingBtn').addEventListener('click', loadRanking);
+  el('submitScoreBtn').addEventListener('click', ()=>{
+    const name = (el('nameInput').value || '冒険者').trim().slice(0,12) || '冒険者';
+    if(window.CatapultFirebase && window.CatapultFirebase.submitScore){
+      window.CatapultFirebase.submitScore(name, state.totalScore, ()=> loadRanking(), ()=>{});
+    }
+  });
+
+  // ==========================================================
+  //  ゲーム本体（物理演算パート）
+  // ==========================================================
+  const { Engine, World, Bodies, Body, Composite, Events, Vector } = Matter;
+  const canvas = el('game');
+  const ctx = canvas.getContext('2d');
+
+  let engine, world;
+  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [];
+  let current = null;
+  let ammoQueue = [], queueIndex = 0;
+  let stageScore = 0, currentStage = 1, totalEnemiesThisStage = 0;
+  let inGame = false, stageOver = false;
+  let dragging = false, dragPoint = null;
+  let trajectoryHint = true;
+  let turnTimer = 0, speedMul = 1;
+  let toRemove = [], particles = [], explosions = [];
+  let gameClock = 0;
+  let killsThisTurn = 0;
+
+  function stageParams(n){
+    const capped = Math.min(n, 4);
+    return {
+      rows: 2+capped,
+      baseCount: 3+capped,
+      enemyHp: n>=7 ? 2 : 1,
+      ammoLen: Math.max(3, 4+Math.min(n,5)),
+      threshBonus: Math.min(n,10)*0.035,
+    };
+  }
+  function rowBlocksX(count){
+    const arr=[]; for(let i=0;i<count;i++) arr.push(349 - i*30); return arr;
+  }
+
+  function buildFortress(sp){
+    const rowsData = [];
+    for(let r=0;r<sp.rows;r++){
+      const count = sp.baseCount - r;
+      if(count<1) break;
+      const y = 400 - r*28;
+      const xs = rowBlocksX(count);
+      const h = (r===sp.rows-1) ? 24 : 28;
+      xs.forEach(x=> addBlock(x,y,26,h));
+      rowsData.push({r,y,xs,count});
+    }
+    const top = rowsData[rowsData.length-1];
+    const apexX = (top.xs[0]+top.xs[top.xs.length-1])/2;
+    addEnemy(apexX, top.y-21, sp.enemyHp);
+
+    const bottom = rowsData[0];
+    addEnemy(Math.min.apply(null,bottom.xs)-25, 408, sp.enemyHp);
+    addEnemy(Math.max.apply(null,bottom.xs)+25, 408, sp.enemyHp);
+
+    for(let r=1;r<=sp.rows-2;r++){
+      const row = rowsData[r];
+      const cx = row.xs.reduce((a,b)=>a+b,0)/row.xs.length;
+      addEnemy(cx, row.y-4, sp.enemyHp);
+    }
+  }
+
+  function addBlock(x,y,w,h){
+    const b = Bodies.rectangle(x,y,w,h,{density:0.0015, friction:0.6, restitution:0.05, label:'block'});
+    b.blockW=w; b.blockH=h;
+    blocks.push(b); World.add(world,b);
+  }
+  function addEnemy(x,y,hp){
+    const e = Bodies.circle(x,y,9,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
+    e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0;
+    enemiesArr.push(e); World.add(world,e);
+  }
+
+  function buildAmmoQueue(n){
+    const sp = stageParams(n);
+    const pool = MONSTER_ORDER.filter(k=> state.monsters[k].owned);
+    const queue = [];
+    for(let i=0;i<sp.ammoLen;i++) queue.push(pool[Math.floor(Math.random()*pool.length)]);
+    return queue;
+  }
+
+  function enterStage(n){
+    currentStage = n;
+    engine = Engine.create();
+    engine.gravity.y = 1;
+    world = engine.world;
+    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[];
+    toRemove=[]; particles=[]; explosions=[];
+    gameClock=0; killsThisTurn=0; stageScore=0; stageOver=false;
+    dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
+
+    const ground = Bodies.rectangle(W/2, GROUND_Y+15, W+40, 30, {isStatic:true, label:'ground', friction:0.9});
+    World.add(world, ground);
+
+    const sp = stageParams(n);
+    buildFortress(sp);
+    totalEnemiesThisStage = enemiesArr.length;
+
+    ammoQueue = buildAmmoQueue(n);
+    queueIndex = 0;
+    current = null;
+
+    Events.on(engine, 'collisionStart', onCollisionStart);
+
+    inGame = true;
+    spawnNext();
+    updateHUD();
+    renderQueue();
+    showScreen('game');
+  }
+
+  function spawnNext(){
+    if(queueIndex >= ammoQueue.length){ current=null; return; }
+    const type = ammoQueue[queueIndex];
+    const def = MONSTER_DEFS[type];
+    const body = Bodies.circle(ANCHOR.x, ANCHOR.y, def.radius, {
+      density:def.density, friction:def.friction, restitution:def.restitution, isStatic:true, label:'proj_'+type
+    });
+    World.add(world, body);
+    current = { body, type, launched:false, hasSplit:false, exploded:false };
+  }
+
+  function onCollisionStart(evt){
+    for(const pair of evt.pairs){ handlePair(pair.bodyA, pair.bodyB); handlePair(pair.bodyB, pair.bodyA); }
+  }
+
+  function handlePair(a, b){
+    if(stageOver) return;
+    if(a.label==='enemy' && enemiesArr.includes(a)){
+      const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
+      const mult = levelMult(current ? current.type : null);
+      const required = BASE_THRESHOLD * (1 + stageParams(currentStage).threshBonus);
+      if(relSpeed*mult > required && b.label!=='ground'){
+        damageEnemy(a, 1, 'proj');
+      }
+    }
+    if(!current) return;
+    if(a===current.body && a.label==='proj_slime' && !current.hasSplit && b.label!=='proj_slime'){
+      current.hasSplit = true; splitSlime(a);
+    }
+    if(a===current.body && a.label==='proj_dragon' && !current.exploded && b.label!=='proj_dragon'){
+      current.exploded = true; explodeAt(a.position);
+    }
+    if(a===current.body && a.label==='proj_icegolem' && !current.exploded && b.label!=='proj_icegolem'){
+      current.exploded = true; freezeAt(a.position);
+    }
+  }
+
+  function damageEnemy(body, amount, source){
+    body.hp -= amount;
+    if(body.hp <= 0){
+      killEnemy(body, source);
+    } else {
+      body.hitFlash = 1.0;
+      pushParticle(body.position.x, body.position.y-14, 'HIT', '#ffb057');
+    }
+  }
+
+  function killEnemy(body, source){
+    toRemove.push(body);
+    const idx = enemiesArr.indexOf(body);
+    if(idx>=0) enemiesArr.splice(idx,1);
+    const points = 100;
+    stageScore += points;
+    killsThisTurn++;
+    bumpMissionTrack('anyKill', 1);
+    if(current) bumpMissionTrack('type:'+current.type, 1);
+    if(source==='explosion') bumpMissionTrack('explosionKill', 1);
+    pushParticle(body.position.x, body.position.y, '+'+points, '#f0c04a');
+    updateHUD();
+    if(enemiesArr.length===0 && !stageOver){ endStage(true); }
+  }
+
+  function splitSlime(body){
+    const pos = {x:body.position.x, y:body.position.y};
+    const vel = body.velocity;
+    toRemove.push(body);
+    [-0.5,0,0.5].forEach(da=>{
+      const speed = Vector.magnitude(vel)*0.6 || 3;
+      const baseAngle = Math.atan2(vel.y, vel.x) + da;
+      const frag = Bodies.circle(pos.x, pos.y-4, 6, {density:0.001, friction:0.5, restitution:0.35, label:'frag'});
+      Body.setVelocity(frag, {x:Math.cos(baseAngle)*speed, y:Math.sin(baseAngle)*speed-1});
+      World.add(world, frag); fragments.push(frag);
+    });
+    pushParticle(pos.x, pos.y-14, '分裂!', '#7bd66b');
+  }
+
+  function explodeAt(pos){
+    const RADIUS=78, FORCE=0.045, KILL_RADIUS=48;
+    [...blocks, ...enemiesArr, ...fragments].forEach(body=>{
+      const d = Vector.magnitude(Vector.sub(body.position, pos));
+      if(d<RADIUS){
+        const dir = Vector.normalise(Vector.sub(body.position, pos));
+        const power = (1-d/RADIUS)*FORCE;
+        Body.applyForce(body, body.position, {x:dir.x*power, y:dir.y*power-power*0.3});
+      }
+    });
+    [...enemiesArr].forEach(e=>{
+      const d = Vector.magnitude(Vector.sub(e.position, pos));
+      if(d<KILL_RADIUS) damageEnemy(e, e.hp, 'explosion');
+    });
+    pushParticle(pos.x, pos.y-10, '爆発!', '#ff8a3d');
+    explosions.push({x:pos.x, y:pos.y, t:0});
+  }
+
+  function freezeAt(pos){
+    const RADIUS=68;
+    enemiesArr.forEach(e=>{
+      const d = Vector.magnitude(Vector.sub(e.position, pos));
+      if(d<RADIUS){ e.frictionAir=0.9; freezeTimers.push({body:e, until: gameClock+2200}); }
+    });
+    pushParticle(pos.x, pos.y-10, '凍結!', '#5fc7e0');
+  }
+
+  function pushParticle(x,y,text,color){ particles.push({x,y,text,color,t:0,life:800}); }
+
+  function updateHUD(){
+    el('ammoVal').textContent = Math.max(0, ammoQueue.length - queueIndex - (current && current.launched ? 1 : 0));
+    el('enemyVal').textContent = enemiesArr.length + '/' + totalEnemiesThisStage;
+    el('scoreVal').textContent = stageScore;
+    el('stageLabel').textContent = currentStage;
+    const st = state.stages[currentStage];
+    const stars = st ? st.stars : 0;
+    el('stageStarsHud').textContent = '★★★'.slice(0,stars) + '☆☆☆'.slice(0,3-stars);
+  }
+
+  function renderQueue(){
+    const wrap = el('queueTray');
+    const counts = {};
+    const order = [];
+    for(let i=queueIndex;i<ammoQueue.length;i++){
+      const t = ammoQueue[i];
+      if(!counts[t]){ counts[t]=0; order.push(t); }
+      counts[t]++;
+    }
+    wrap.innerHTML = order.map(t=>{
+      const def = MONSTER_DEFS[t];
+      const hasImg = !!IMAGE_ASSETS.monsters[t];
+      const style = hasImg ? monsterIconStyle(t) : '';
+      return `<div class="next-chip" style="${style}">${hasImg?'':def.emoji}<span class="qty">x${counts[t]}</span></div>`;
+    }).join('');
+  }
+
+  function endStage(cleared){
+    stageOver = true;
+    inGame = false;
+    state.totalScore += stageScore;
+
+    if(cleared){
+      const leftover = Math.max(0, ammoQueue.length - queueIndex - 1);
+      const stars = leftover >= Math.ceil(ammoQueue.length*0.4) ? 3 : (leftover>=1 ? 2 : 1);
+      const goldReward = 80 + currentStage*20 + stars*40;
+      state.gold += goldReward;
+      const prevStars = state.stages[currentStage] ? state.stages[currentStage].stars : 0;
+      state.stages[currentStage] = { cleared:true, stars: Math.max(prevStars, stars) };
+      bumpMissionTrack('stageClear', 1);
+      if(leftover>=1) bumpMissionTrack('leftover', 1);
+      if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
+      saveState();
+
+      overlayTitleEl.textContent = 'ステージクリア！';
+      overlayTitleEl.className = 'win';
+      overlayStarsEl.innerHTML = '<span class="'+(stars>=1?'lit':'')+'">★</span><span class="'+(stars>=2?'lit':'')+'">★</span><span class="'+(stars>=3?'lit':'')+'">★</span>';
+      overlayScoreEl.textContent = stageScore;
+      overlayGoldEl.textContent = goldReward;
+      overlayTextEl.textContent = currentStage>=TOTAL_STAGES ? `全${TOTAL_STAGES}ステージを制圧した！お見事！` : '砦を制圧した。次のステージへ進もう。';
+
+      if(currentStage < TOTAL_STAGES){
+        overlayPrimaryEl.textContent = '▶ 次のステージへ';
+        overlayPrimaryEl.onclick = ()=>{ closeOverlay(); enterStage(currentStage+1); };
+        overlaySecondaryEl.classList.remove('hidden');
+      } else {
+        overlayPrimaryEl.textContent = '🗺️ ワールドマップへ';
+        overlayPrimaryEl.onclick = ()=>{ closeOverlay(); showScreen('map'); };
+        overlaySecondaryEl.classList.add('hidden');
+      }
+      overlaySecondaryEl.textContent = '🗺️ マップに戻る';
+      overlaySecondaryEl.onclick = ()=>{ closeOverlay(); showScreen('map'); };
+    } else {
+      const goldReward = Math.round(stageScore*0.3);
+      state.gold += goldReward;
+      saveState();
+
+      overlayTitleEl.textContent = '弾切れ…';
+      overlayTitleEl.className = 'lose';
+      overlayStarsEl.innerHTML = '';
+      overlayScoreEl.textContent = stageScore;
+      overlayGoldEl.textContent = goldReward;
+      overlayTextEl.textContent = '砦の敵を全て倒しきれなかった。編成を見直して再挑戦しよう。';
+      overlayPrimaryEl.textContent = '🔄 もう一度挑戦';
+      overlayPrimaryEl.onclick = ()=>{ closeOverlay(); enterStage(currentStage); };
+      overlaySecondaryEl.classList.remove('hidden');
+      overlaySecondaryEl.textContent = '🗺️ マップに戻る';
+      overlaySecondaryEl.onclick = ()=>{ closeOverlay(); showScreen('map'); };
+    }
+    if(engine) Events.off(engine, 'collisionStart', onCollisionStart);
+    overlayEl.classList.remove('hidden');
+  }
+  function closeOverlay(){ overlayEl.classList.add('hidden'); }
+
+  el('pauseBtn').addEventListener('click', ()=>{
+    inGame = false;
+    if(engine) Events.off(engine, 'collisionStart', onCollisionStart);
+    showScreen('map');
+  });
+
+  const speedBtnEl = el('speedBtn');
+  speedBtnEl.addEventListener('click', ()=>{ speedMul = speedMul===1?2:1; speedBtnEl.textContent='x'+speedMul; });
+  el('skipBtn').addEventListener('click', ()=>{ if(current && current.launched) forceNextTurn(); });
+  const hintBtnEl = el('hintBtn');
+  hintBtnEl.classList.add('active');
+  hintBtnEl.addEventListener('click', ()=>{
+    trajectoryHint = !trajectoryHint;
+    hintBtnEl.classList.toggle('active', trajectoryHint);
+  });
+
+  function computeTrajectoryPreview(dx, dy){
+    const pts = [];
+    let vx = dx*LAUNCH_SCALE, vy = dy*LAUNCH_SCALE;
+    let x = ANCHOR.x, y = ANCHOR.y;
+    const gravStep = engine ? engine.gravity.y * engine.gravity.scale : 0.001;
+    for(let i=0;i<70;i++){
+      vy += gravStep;
+      x += vx; y += vy;
+      if(i%3===0) pts.push({x,y});
+      if(y > GROUND_Y || x > W+20) break;
+    }
+    return pts;
+  }
+
+  function forceNextTurn(){
+    if(current && current.body) toRemove.push(current.body);
+    if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
+    killsThisTurn = 0;
+    queueIndex++;
+    current = null;
+    if(queueIndex >= ammoQueue.length){ if(!stageOver) endStage(false); }
+    else spawnNext();
+    updateHUD(); renderQueue();
+  }
+
+  // ---------- 入力 ----------
+  function canvasPointFromEvent(e){
+    const rect = canvas.getBoundingClientRect();
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    return { x: cx*(W/rect.width), y: cy*(H/rect.height) };
+  }
+  function onDown(e){
+    if(!inGame || stageOver || !current || current.launched) return;
+    const p = canvasPointFromEvent(e);
+    if(Math.hypot(p.x-current.body.position.x, p.y-current.body.position.y) < 42){
+      dragging = true; dragPoint = p; e.preventDefault();
+    }
+  }
+  function onMove(e){
+    if(!dragging) return;
+    const p = canvasPointFromEvent(e);
+    let dx=p.x-ANCHOR.x, dy=p.y-ANCHOR.y;
+    const dist = Math.hypot(dx,dy);
+    if(dist>MAX_PULL){ dx=dx/dist*MAX_PULL; dy=dy/dist*MAX_PULL; }
+    dragPoint = {x:ANCHOR.x+dx, y:ANCHOR.y+dy};
+    Body.setPosition(current.body, dragPoint);
+    e.preventDefault();
+  }
+  function onUp(){
+    if(!dragging) return;
+    dragging = false;
+    const dx = ANCHOR.x-dragPoint.x, dy = ANCHOR.y-dragPoint.y;
+    const dist = Math.hypot(dx,dy);
+    if(dist>14){
+      Body.setStatic(current.body, false);
+      Body.setVelocity(current.body, {x:dx*LAUNCH_SCALE, y:dy*LAUNCH_SCALE});
+      current.launched = true; turnTimer = TURN_DURATION;
+    } else {
+      Body.setPosition(current.body, ANCHOR);
+    }
+    dragPoint = null; updateHUD();
+  }
+  canvas.addEventListener('mousedown', onDown);
+  canvas.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+  canvas.addEventListener('touchstart', onDown, {passive:false});
+  canvas.addEventListener('touchmove', onMove, {passive:false});
+  canvas.addEventListener('touchend', onUp);
+
+  // ---------- メインループ ----------
+  let lastTs = null;
+  function loop(ts){
+    if(lastTs===null) lastTs = ts;
+    const dt = Math.min(ts-lastTs, 33);
+    lastTs = ts;
+    if(inGame && !stageOver){
+      for(let i=0;i<speedMul;i++) Engine.update(engine, 16.666);
+      update(dt*speedMul);
+    }
+    if(inGame) render();
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt){
+    gameClock += dt;
+    if(toRemove.length){
+      toRemove.forEach(b=>{ try{ World.remove(world,b); }catch(e){} });
+      fragments = fragments.filter(f=>!toRemove.includes(f));
+      toRemove = [];
+    }
+    fragments = fragments.filter(f=>{
+      if(f.position.y>H+80 || f.position.x>W+120){ World.remove(world,f); return false; }
+      return true;
+    });
+
+    if(current && current.launched && current.type==='centaur'){
+      const g = engine.gravity;
+      const lift = current.body.mass * g.y * g.scale * 0.5;
+      Body.applyForce(current.body, current.body.position, {x:0, y:-lift});
+    }
+
+    for(let i=freezeTimers.length-1;i>=0;i--){
+      if(gameClock >= freezeTimers[i].until){
+        freezeTimers[i].body.frictionAir = freezeTimers[i].body.baseFrictionAir;
+        freezeTimers.splice(i,1);
+      }
+    }
+
+    enemiesArr.forEach(e=>{ if(e.hitFlash>0) e.hitFlash = Math.max(0, e.hitFlash - dt/300); });
+
+    if(current && current.launched){
+      turnTimer -= dt;
+      const offscreen = current.body.position.y>H+100 || current.body.position.x>W+140;
+      const stillExists = Composite.get(world, current.body.id, 'body');
+      if(turnTimer<=0 || offscreen || !stillExists){
+        if(stillExists) World.remove(world, current.body);
+        if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
+        killsThisTurn = 0;
+        queueIndex++;
+        current = null;
+        if(queueIndex >= ammoQueue.length){ if(!stageOver) endStage(false); }
+        else spawnNext();
+        renderQueue();
+      }
+    }
+
+    for(let i=particles.length-1;i>=0;i--){ particles[i].t+=dt; if(particles[i].t>particles[i].life) particles.splice(i,1); }
+    for(let i=explosions.length-1;i>=0;i--){ explosions[i].t+=dt; if(explosions[i].t>500) explosions.splice(i,1); }
+    updateHUD();
+  }
+
+  function drawRectBody(b,color){
+    ctx.save();
+    ctx.translate(b.position.x, b.position.y);
+    ctx.rotate(b.angle);
+    if(loadedImages.block){
+      ctx.drawImage(loadedImages.block, -b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    } else {
+      ctx.fillStyle = color;
+      ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth=1;
+    ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    ctx.restore();
+  }
+
+  function render(){
+    ctx.clearRect(0,0,W,H);
+    if(loadedImages.background){
+      ctx.drawImage(loadedImages.background, 0, 0, W, H);
+    } else {
+      ctx.fillStyle = '#0d0906'; ctx.fillRect(0,0,W,H);
+    }
+
+    const g = ctx.createLinearGradient(0,GROUND_Y,0,H);
+    g.addColorStop(0,'#3a2416'); g.addColorStop(1,'#150d08');
+    ctx.fillStyle = g; ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
+    ctx.strokeStyle = 'rgba(255,122,61,0.25)';
+    ctx.beginPath(); ctx.moveTo(0,GROUND_Y); ctx.lineTo(W,GROUND_Y); ctx.stroke();
+
+    ctx.strokeStyle = '#6b4a30'; ctx.lineWidth=5; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(38,GROUND_Y); ctx.lineTo(ANCHOR.x,ANCHOR.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(82,GROUND_Y); ctx.lineTo(ANCHOR.x,ANCHOR.y); ctx.stroke();
+
+    if(dragging && current && dragPoint){
+      ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.moveTo(38,GROUND_Y-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(82,GROUND_Y-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.setLineDash([]);
+      const dx=ANCHOR.x-dragPoint.x, dy=ANCHOR.y-dragPoint.y;
+      if(trajectoryHint){
+        const pts = computeTrajectoryPreview(dx,dy);
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        pts.forEach((p,i)=>{
+          const r = Math.max(1, 3 - i*0.03);
+          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+        });
+      } else {
+        ctx.strokeStyle='rgba(255,138,61,0.6)'; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.moveTo(dragPoint.x,dragPoint.y); ctx.lineTo(dragPoint.x+dx*1.6, dragPoint.y+dy*1.6); ctx.stroke();
+      }
+    }
+
+    blocks.forEach(b=> drawRectBody(b, '#5a4536'));
+
+    enemiesArr.forEach(e=>{
+      const frozen = e.frictionAir>0.5;
+      if(loadedImages.enemy){
+        ctx.save();
+        ctx.translate(e.position.x, e.position.y);
+        if(frozen){ ctx.filter = 'hue-rotate(160deg) saturate(1.3)'; }
+        ctx.drawImage(loadedImages.enemy, -12, -12, 24, 24);
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.fillStyle = frozen ? '#7fb8e0' : (e.hp<e.maxHp ? '#e07a5a' : '#c9453a');
+        ctx.arc(e.position.x,e.position.y,9,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#000a'; ctx.lineWidth=1; ctx.stroke();
+        ctx.font='11px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillStyle='#fff';
+        ctx.fillText(frozen?'🥶':'👹', e.position.x, e.position.y+1);
+      }
+      if(e.hitFlash>0){
+        ctx.beginPath(); ctx.strokeStyle=`rgba(255,255,255,${e.hitFlash})`; ctx.lineWidth=2;
+        ctx.arc(e.position.x,e.position.y,13,0,Math.PI*2); ctx.stroke();
+      }
+      if(e.maxHp>1){
+        ctx.font='8px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
+        ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, e.position.y+16);
+      }
+    });
+
+    fragments.forEach(f=>{ ctx.beginPath(); ctx.fillStyle='#7bd66b'; ctx.arc(f.position.x,f.position.y,6,0,Math.PI*2); ctx.fill(); });
+
+    if(current){
+      const def = MONSTER_DEFS[current.type];
+      const img = loadedImages.monsters[current.type];
+      if(img){
+        ctx.save();
+        ctx.translate(current.body.position.x, current.body.position.y);
+        ctx.rotate(current.body.angle);
+        ctx.drawImage(img, -def.radius, -def.radius, def.radius*2, def.radius*2);
+        ctx.restore();
+      } else {
+        ctx.beginPath(); ctx.fillStyle=def.color;
+        ctx.arc(current.body.position.x, current.body.position.y, def.radius, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#000a'; ctx.lineWidth=1; ctx.stroke();
+        ctx.save();
+        ctx.translate(current.body.position.x, current.body.position.y);
+        ctx.rotate(current.body.angle);
+        ctx.font='13px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(def.emoji, 0, 1);
+        ctx.restore();
+      }
+    }
+
+    explosions.forEach(ex=>{
+      const p = ex.t/500;
+      ctx.beginPath(); ctx.strokeStyle=`rgba(255,138,61,${1-p})`; ctx.lineWidth=3;
+      ctx.arc(ex.x,ex.y,20+p*60,0,Math.PI*2); ctx.stroke();
+    });
+
+    particles.forEach(p=>{
+      const a = 1-p.t/p.life;
+      ctx.globalAlpha = Math.max(0,a);
+      ctx.font='11px "Courier New",monospace'; ctx.textAlign='center';
+      ctx.fillStyle = p.color;
+      ctx.fillText(p.text, p.x, p.y - p.t/40);
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  // ---------- 起動 ----------
+  preloadImages();
+  el('overlayPrimaryBtn'); // no-op ref warm-up
+  refreshTopbar();
+  refreshMissionDot();
+  showScreen('map');
+  if(typeof Matter === 'undefined'){
+    alert('物理エンジン(Matter.js)の読み込みに失敗しました。通信環境を確認してください。');
+  } else {
+    requestAnimationFrame(loop);
+  }
+})();
+
+</script>
+<script>
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', ()=>{
+      navigator.serviceWorker.register('sw.js').catch(()=>{});
+    });
+  }
+</script>
+</body>
+</html>
