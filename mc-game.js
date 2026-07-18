@@ -14,9 +14,21 @@
   };
 
   // ---------- 定数 ----------
-  const TOTAL_STAGES = 10;
+  const WORLDS = [
+    { id:1, name:'火山の丘' },
+    { id:2, name:'氷結の山脈' },
+  ];
+  const STAGES_PER_WORLD = 10;
+  const TOTAL_STAGES = WORLDS.length * STAGES_PER_WORLD;
   const LEVEL_MAX = 5;
   const BASE_THRESHOLD = 2.3;
+
+  function worldForStage(n){ return Math.ceil(n / STAGES_PER_WORLD); }
+  function localStageInfo(n){
+    const worldIndex = worldForStage(n);
+    const localN = ((n-1) % STAGES_PER_WORLD) + 1;
+    return { worldIndex, localN };
+  }
 
   const MONSTER_DEFS = {
     slime:    {name:'スライム',        emoji:'🟢', color:'#7bd66b', special:'split',   specialText:'着弾すると3体に分裂し、周囲へ被害を広げる',
@@ -75,11 +87,15 @@
     },
   };
   function stageBackgroundKey(stageN){
-    if(isBossStage(stageN)) return 'volcano';
-    if(stageN <= 2) return 'meadow';
-    if(stageN <= 4) return 'forest';
-    if(stageN <= 7) return 'cave';
-    return 'snow';
+    const { worldIndex, localN } = localStageInfo(stageN);
+    if(localN % 5 === 0) return 'volcano'; // ボスステージは共通の溶岩アリーナ
+    const forward = worldIndex % 2 === 1;   // ワールドごとに巡回順を変えて変化をつける
+    const cycle = forward
+      ? ['meadow','meadow','forest','forest','cave','cave','snow','snow']
+      : ['snow','snow','cave','cave','forest','forest','meadow','meadow'];
+    const nonBossOrder = [1,2,3,4,6,7,8,9];
+    const idx = nonBossOrder.indexOf(localN);
+    return cycle[idx] || 'meadow';
   }
   const loadedImages = { monsters:{}, backgrounds:{}, blocks:{} };
   function preloadImages(){
@@ -193,7 +209,7 @@
     topbar.classList.toggle('hidden', chromeless);
     bottomNav.classList.toggle('hidden', chromeless);
     document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.nav===name));
-    if(name==='map') renderMap();
+    if(name==='map'){ mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
     if(name==='monsters') renderMonsters();
     if(name==='shop') renderShop();
     if(name==='missions') renderMissions();
@@ -205,6 +221,12 @@
     item.addEventListener('click', ()=> showScreen(item.dataset.nav));
   });
   el('splashPlayBtn').addEventListener('click', ()=> showScreen('map'));
+  el('worldPrevBtn').addEventListener('click', ()=>{
+    if(mapWorldView>1){ mapWorldView--; renderMap(); }
+  });
+  el('worldNextBtn').addEventListener('click', ()=>{
+    if(mapWorldView<WORLDS.length){ mapWorldView++; renderMap(); }
+  });
   (function setSplashIcon(){
     const img = new Image();
     img.onload = ()=>{ el('splashIcon').style.backgroundImage = `url('icon-192.png')`; el('splashIcon').textContent=''; };
@@ -213,6 +235,7 @@
   })();
 
   // ---------- ワールドマップ ----------
+  let mapWorldView = 1;
   function unlockedUpTo(){
     let n = 1;
     while(n < TOTAL_STAGES && state.stages[n] && state.stages[n].cleared) n++;
@@ -223,10 +246,17 @@
     wrap.style.position = 'relative';
     const pathEl = el('mapPath');
     const unlocked = unlockedUpTo();
+    mapWorldView = Math.min(Math.max(mapWorldView, 1), WORLDS.length);
+    const world = WORLDS[mapWorldView-1];
+    el('worldLabelText').textContent = `WORLD ${world.id}・${world.name}`;
+    el('worldPrevBtn').classList.toggle('disabled', mapWorldView<=1);
+    el('worldNextBtn').classList.toggle('disabled', mapWorldView>=WORLDS.length);
+
     const pts = [];
     let html = '';
-    for(let i=0;i<TOTAL_STAGES;i++){
-      const n = i+1;
+    for(let i=0;i<STAGES_PER_WORLD;i++){
+      const n = (mapWorldView-1)*STAGES_PER_WORLD + i + 1;
+      const local = i+1;
       const topPct = 90 - i*7.6;
       const xPct = 50 + Math.sin(i*1.15)*28;
       pts.push([xPct, topPct]);
@@ -237,8 +267,8 @@
       const starStr = '★★★'.slice(0,stars) + '☆☆☆'.slice(0, 3-stars);
       html += `<div class="stage-node ${locked?'locked':''} ${current?'current':''}" data-stage="${n}"
                  style="left:${xPct}%; top:${topPct}%;">
-                 ${n%5===0?'<div class="boss-badge">BOSS</div>':''}
-                 ${locked ? '<div class="lock-icon">🔒</div>' : `<div class="num">${n}</div><div class="stars">${starStr}</div>`}
+                 ${local%5===0?'<div class="boss-badge">BOSS</div>':''}
+                 ${locked ? '<div class="lock-icon">🔒</div>' : `<div class="num">${local}</div><div class="stars">${starStr}</div>`}
                </div>`;
     }
     const svgPoints = pts.map(p=>p[0]+','+p[1]).join(' ');
@@ -416,20 +446,26 @@
     }
   }
 
-  function isBossStage(n){ return n % 5 === 0; }
-  function bossHpForStage(n){ return n >= 10 ? 7 : 4; }
+  function isBossStage(n){ return localStageInfo(n).localN % 5 === 0; }
+  function bossHpForStage(n){
+    const { worldIndex, localN } = localStageInfo(n);
+    const base = localN >= 10 ? 7 : 4;
+    return base + (worldIndex-1)*3;
+  }
 
   function stageParams(n){
-    const capped = Math.min(n, 4);
-    const boss = isBossStage(n);
+    const { worldIndex, localN } = localStageInfo(n);
+    const worldBonus = worldIndex - 1; // ワールドが進むごとに難易度の底上げ
+    const capped = Math.min(localN, 4) + worldBonus;
+    const boss = localN % 5 === 0;
     return {
       rows: 2+capped + (boss?1:0),
-      baseCount: 3+capped + (boss?1:0),
-      enemyHp: n>=7 ? 2 : 1,
-      ammoLen: Math.max(3, 4+Math.min(n,5)) + (boss?2:0),
-      threshBonus: Math.min(n,10)*0.035,
+      baseCount: Math.min(3+capped + (boss?1:0), 6), // 城壁がカタパルト側までせり出さないよう上限
+      enemyHp: (localN>=7 ? 2 : 1) + worldBonus,
+      ammoLen: Math.max(3, 4+Math.min(localN,5)) + (boss?2:0) + worldBonus,
+      threshBonus: Math.min(localN,10)*0.035 + worldBonus*0.05,
       isBoss: boss,
-      barrelCount: n<3 ? 0 : (boss ? 2 : 1),
+      barrelCount: (localN<3 ? 0 : (boss ? 2 : 1)) + Math.min(worldBonus,1),
     };
   }
   function rowBlocksX(count){
@@ -507,9 +543,14 @@
       addEnemy(oddSlots[idx], wallTopY-BLOCK_H/2-15, sp.enemyHp);
     }
 
-    // 爆発樽の配置（ステージ3以降。城壁の脇の地面に設置）
-    for(let i=0;i<sp.barrelCount;i++){
-      addBarrel(leftX - BLOCK_W/2 - 30 - i*34, GROUND_Y-16);
+    // 爆発樽の配置（ステージ3以降。城壁とカタパルトの間の安全な範囲内にのみ設置）
+    const barrelSpacing = 30;
+    const barrelZoneRight = leftX - BLOCK_W/2 - 14;
+    const barrelZoneLeft = 112;
+    const maxBarrelsFit = Math.max(0, Math.floor((barrelZoneRight - barrelZoneLeft) / barrelSpacing) + 1);
+    const actualBarrelCount = Math.min(sp.barrelCount, maxBarrelsFit);
+    for(let i=0;i<actualBarrelCount;i++){
+      addBarrel(barrelZoneRight - i*barrelSpacing, GROUND_Y-16);
     }
   }
 
@@ -731,7 +772,7 @@
     el('ammoVal').textContent = Math.max(0, ammoQueue.length - queueIndex - (current && current.launched ? 1 : 0));
     el('enemyVal').textContent = enemiesArr.length + '/' + totalEnemiesThisStage;
     el('scoreVal').textContent = stageScore;
-    el('stageLabel').textContent = currentStage;
+    el('stageLabel').textContent = localStageInfo(currentStage).localN;
     const st = state.stages[currentStage];
     const stars = st ? st.stars : 0;
     el('stageStarsHud').textContent = '★★★'.slice(0,stars) + '☆☆☆'.slice(0,3-stars);
@@ -776,7 +817,17 @@
       overlayStarsEl.innerHTML = '<span class="'+(stars>=1?'lit':'')+'">★</span><span class="'+(stars>=2?'lit':'')+'">★</span><span class="'+(stars>=3?'lit':'')+'">★</span>';
       overlayScoreEl.textContent = stageScore;
       overlayGoldEl.textContent = goldReward;
-      overlayTextEl.textContent = currentStage>=TOTAL_STAGES ? `全${TOTAL_STAGES}ステージを制圧した！お見事！` : '砦を制圧した。次のステージへ進もう。';
+      const { worldIndex, localN } = localStageInfo(currentStage);
+      const isWorldEnd = localN === STAGES_PER_WORLD;
+      const isFinalStage = currentStage >= TOTAL_STAGES;
+      if(isFinalStage){
+        overlayTextEl.textContent = `全${WORLDS.length}ワールド・${TOTAL_STAGES}ステージを制圧した！お見事！`;
+      } else if(isWorldEnd){
+        const nextWorld = WORLDS[worldIndex]; // 0-indexed配列なのでworldIndexが次のワールド
+        overlayTextEl.textContent = `ワールド${worldIndex}「${WORLDS[worldIndex-1].name}」制覇！新たなワールド「${nextWorld.name}」が解放された！`;
+      } else {
+        overlayTextEl.textContent = '砦を制圧した。次のステージへ進もう。';
+      }
 
       if(currentStage < TOTAL_STAGES){
         overlayPrimaryEl.textContent = '▶ 次のステージへ';

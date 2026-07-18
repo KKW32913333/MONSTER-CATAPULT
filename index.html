@@ -115,13 +115,23 @@ html,body{
   box-shadow:0 5px 0 var(--ink);
   overflow:hidden; padding:16px 0;
 }
+.world-switch{
+  position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:3;
+  display:flex; align-items:center; gap:8px;
+}
+.world-arrow{
+  width:26px; height:26px; border-radius:50%; flex:0 0 auto; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800;
+  background:var(--surface-2); color:var(--cloud); border:2px solid var(--ink);
+  box-shadow:0 2px 0 var(--ink);
+}
+.world-arrow:active{ transform:translateY(2px); box-shadow:none; }
+.world-arrow.disabled{ opacity:.3; pointer-events:none; }
 .world-label{
-  position:absolute; top:14px; left:50%; transform:translateX(-50%) rotate(-2deg); z-index:3;
   font-size:12px; font-weight:800; letter-spacing:.03em; color:var(--ink);
-  background:var(--gold); padding:6px 20px; border-radius:20px;
+  background:var(--gold); padding:6px 18px; border-radius:20px; white-space:nowrap;
   box-shadow:0 3px 0 var(--ink); border:2px solid var(--ink);
 }
-.world-label::before, .world-label::after{ content:none; }
 .map-path{ position:absolute; inset:0; }
 .stage-node{
   position:absolute; width:56px; height:56px; margin-left:-28px; margin-top:-28px;
@@ -351,7 +361,11 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
   <section id="screen-map" class="screen">
     <div class="screen-title">ステージ選択<div class="bar"></div></div>
     <div id="mapScroll">
-      <div class="world-label">WORLD 1・火山の丘</div>
+      <div class="world-switch">
+        <div class="world-arrow" id="worldPrevBtn">◀</div>
+        <div class="world-label"><span id="worldLabelText">WORLD 1・火山の丘</span></div>
+        <div class="world-arrow" id="worldNextBtn">▶</div>
+      </div>
       <div class="map-path" id="mapPath"></div>
     </div>
   </section>
