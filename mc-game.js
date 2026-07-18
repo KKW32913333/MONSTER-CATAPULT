@@ -59,10 +59,17 @@
       cave:   'bg-cave.jpg',     // ステージ5〜7：水晶の洞窟
       snow:   'bg-snow.jpg',     // ステージ8〜10：雪山の村
     },
-    block: null,         // 砦ブロックのテクスチャ（推奨: 正方形, png）
+    // 砦ブロックのテクスチャ：背景と同じテーマ区分で切り替わります
+    blocks: {
+      meadow: 'block-meadow.jpg',
+      forest: 'block-forest.jpg',
+      cave:   'block-cave.jpg',
+      snow:   'block-snow.jpg',
+    },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
-    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 128x128, png/透過）
-      slime:null, dragon:null, icegolem:null, spikeball:null, skeleton:null, centaur:null,
+    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
+      slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:null,
+      spikeball:'monster-spikeball.png', skeleton:null, centaur:null,
     },
   };
   function stageBackgroundKey(stageN){
@@ -71,7 +78,7 @@
     if(stageN <= 7) return 'cave';
     return 'snow';
   }
-  const loadedImages = { monsters:{}, backgrounds:{} };
+  const loadedImages = { monsters:{}, backgrounds:{}, blocks:{} };
   function preloadImages(){
     const tryLoad = (key, path, target)=>{
       if(!path) return;
@@ -81,7 +88,7 @@
       img.src = path;
     };
     Object.keys(IMAGE_ASSETS.backgrounds).forEach(k=> tryLoad(k, IMAGE_ASSETS.backgrounds[k], loadedImages.backgrounds));
-    tryLoad('block', IMAGE_ASSETS.block, loadedImages);
+    Object.keys(IMAGE_ASSETS.blocks).forEach(k=> tryLoad(k, IMAGE_ASSETS.blocks[k], loadedImages.blocks));
     tryLoad('enemy', IMAGE_ASSETS.enemy, loadedImages);
     MONSTER_ORDER.forEach(k=> tryLoad(k, IMAGE_ASSETS.monsters[k], loadedImages.monsters));
   }
@@ -879,8 +886,9 @@
     ctx.save();
     ctx.translate(b.position.x, b.position.y);
     ctx.rotate(b.angle);
-    if(loadedImages.block){
-      ctx.drawImage(loadedImages.block, -b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    const blockImg = loadedImages.blocks[stageBackgroundKey(currentStage)];
+    if(blockImg){
+      ctx.drawImage(blockImg, -b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     } else {
       ctx.fillStyle = color;
       ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
