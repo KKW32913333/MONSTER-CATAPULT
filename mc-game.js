@@ -370,7 +370,7 @@
   const ctx = canvas.getContext('2d');
 
   let engine, world;
-  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [];
+  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [];
   let current = null;
   let ammoQueue = [], queueIndex = 0;
   let stageScore = 0, currentStage = 1, totalEnemiesThisStage = 0;
@@ -382,21 +382,27 @@
   let gameClock = 0;
   let killsThisTurn = 0;
 
+  function isBossStage(n){ return n % 5 === 0; }
+  function bossHpForStage(n){ return n >= 10 ? 7 : 4; }
+
   function stageParams(n){
     const capped = Math.min(n, 4);
+    const boss = isBossStage(n);
     return {
-      rows: 2+capped,
-      baseCount: 3+capped,
+      rows: 2+capped + (boss?1:0),
+      baseCount: 3+capped + (boss?1:0),
       enemyHp: n>=7 ? 2 : 1,
-      ammoLen: Math.max(3, 4+Math.min(n,5)),
+      ammoLen: Math.max(3, 4+Math.min(n,5)) + (boss?2:0),
       threshBonus: Math.min(n,10)*0.035,
+      isBoss: boss,
+      barrelCount: n<3 ? 0 : (boss ? 2 : 1),
     };
   }
   function rowBlocksX(count){
     const arr=[]; for(let i=0;i<count;i++) arr.push(FORT_RIGHT_EDGE - i*(BLOCK_W+BLOCK_GAP)); return arr;
   }
 
-  function buildFortress(sp){
+  function buildFortress(sp, stageN){
     const rowsData = [];
     const baseY = GROUND_Y - BLOCK_H/2 - 2;
     for(let r=0;r<sp.rows;r++){
@@ -410,16 +416,27 @@
     }
     const top = rowsData[rowsData.length-1];
     const apexX = (top.xs[0]+top.xs[top.xs.length-1])/2;
-    addEnemy(apexX, top.y-BLOCK_H/2-13, sp.enemyHp);
+    if(sp.isBoss){
+      addBoss(apexX, top.y-BLOCK_H/2-20, bossHpForStage(stageN));
+    } else {
+      addEnemy(apexX, top.y-BLOCK_H/2-13, sp.enemyHp);
+    }
 
     const bottom = rowsData[0];
     addEnemy(Math.min.apply(null,bottom.xs)-BLOCK_W/2-16, GROUND_Y-11, sp.enemyHp);
     addEnemy(Math.max.apply(null,bottom.xs)+BLOCK_W/2+16, GROUND_Y-11, sp.enemyHp);
 
-    for(let r=1;r<=sp.rows-2;r++){
+    const midEnd = sp.isBoss ? sp.rows-3 : sp.rows-2;
+    for(let r=1;r<=midEnd;r++){
       const row = rowsData[r];
       const cx = row.xs.reduce((a,b)=>a+b,0)/row.xs.length;
       addEnemy(cx, row.y-6, sp.enemyHp);
+    }
+
+    // 爆発樽の配置（ステージ3以降。砦の脇に設置し、当てると誘爆して周囲を巻き込む）
+    const leftEdgeX = Math.min.apply(null, bottom.xs) - BLOCK_W/2;
+    for(let i=0;i<sp.barrelCount;i++){
+      addBarrel(leftEdgeX - 26 - i*30, GROUND_Y-16);
     }
   }
 
@@ -430,8 +447,18 @@
   }
   function addEnemy(x,y,hp){
     const e = Bodies.circle(x,y,12,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
-    e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0;
+    e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0; e.isBoss=false;
     enemiesArr.push(e); World.add(world,e);
+  }
+  function addBoss(x,y,hp){
+    const e = Bodies.circle(x,y,21,{density:0.0035, friction:0.5, restitution:0.1, label:'enemy', frictionAir:0.01});
+    e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0; e.isBoss=true;
+    enemiesArr.push(e); World.add(world,e);
+  }
+  function addBarrel(x,y){
+    const b = Bodies.rectangle(x,y,22,26,{density:0.0012, friction:0.6, restitution:0.1, label:'barrel'});
+    b.exploded=false;
+    barrels.push(b); World.add(world,b);
   }
 
   function buildAmmoQueue(n){
@@ -447,7 +474,7 @@
     engine = Engine.create();
     engine.gravity.y = 1;
     world = engine.world;
-    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[];
+    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[];
     toRemove=[]; particles=[]; explosions=[];
     gameClock=0; killsThisTurn=0; stageScore=0; stageOver=false;
     dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
@@ -457,7 +484,7 @@
     World.add(world, ground);
 
     const sp = stageParams(n);
-    buildFortress(sp);
+    buildFortress(sp, n);
     totalEnemiesThisStage = enemiesArr.length;
 
     ammoQueue = buildAmmoQueue(n);
@@ -498,6 +525,12 @@
         damageEnemy(a, 1, 'proj');
       }
     }
+    if(a.label==='barrel' && barrels.includes(a) && !a.exploded){
+      const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
+      if(relSpeed > 1.0 && b.label!=='ground'){
+        explodeBarrel(a);
+      }
+    }
     if(!current) return;
     if(a===current.body && a.label==='proj_slime' && !current.hasSplit && b.label!=='proj_slime'){
       current.hasSplit = true; splitSlime(a);
@@ -516,7 +549,7 @@
       killEnemy(body, source);
     } else {
       body.hitFlash = 1.0;
-      pushParticle(body.position.x, body.position.y-14, 'HIT', '#ffb057');
+      pushParticle(body.position.x, body.position.y-14, body.isBoss?`HIT ${body.hp}/${body.maxHp}`:'HIT', '#ffb057');
     }
   }
 
@@ -524,15 +557,47 @@
     toRemove.push(body);
     const idx = enemiesArr.indexOf(body);
     if(idx>=0) enemiesArr.splice(idx,1);
-    const points = 100;
+    const points = body.isBoss ? body.maxHp*150 : 100;
     stageScore += points;
     killsThisTurn++;
     bumpMissionTrack('anyKill', 1);
     if(current) bumpMissionTrack('type:'+current.type, 1);
     if(source==='explosion') bumpMissionTrack('explosionKill', 1);
-    pushParticle(body.position.x, body.position.y, '+'+points, '#f0c04a');
+    pushParticle(body.position.x, body.position.y, (body.isBoss?'BOSS撃破 +':'+')+points, body.isBoss?'#ffd35e':'#f0c04a');
+    if(body.isBoss){
+      explosions.push({x:body.position.x, y:body.position.y, t:0});
+    }
     updateHUD();
     if(enemiesArr.length===0 && !stageOver){ endStage(true); }
+  }
+
+  function explodeBarrel(barrel){
+    barrel.exploded = true;
+    const idx = barrels.indexOf(barrel);
+    if(idx>=0) barrels.splice(idx,1);
+    toRemove.push(barrel);
+    const pos = {x:barrel.position.x, y:barrel.position.y};
+    const RADIUS=64, FORCE=0.04, KILL_RADIUS=40;
+    [...blocks, ...enemiesArr, ...fragments].forEach(body=>{
+      const d = Vector.magnitude(Vector.sub(body.position, pos));
+      if(d < RADIUS){
+        const dir = Vector.normalise(Vector.sub(body.position, pos));
+        const power = (1-d/RADIUS) * FORCE;
+        Body.applyForce(body, body.position, {x:dir.x*power, y:dir.y*power-power*0.25});
+      }
+    });
+    [...enemiesArr].forEach(e=>{
+      const d = Vector.magnitude(Vector.sub(e.position, pos));
+      if(d < KILL_RADIUS) damageEnemy(e, e.isBoss?2:e.hp, 'explosion');
+    });
+    pushParticle(pos.x, pos.y-10, '誘爆!', '#ff8a3d');
+    explosions.push({x:pos.x, y:pos.y, t:0});
+    // 連鎖：範囲内の他の樽も誘爆させる
+    [...barrels].forEach(other=>{
+      if(other.exploded) return;
+      const d = Vector.magnitude(Vector.sub(other.position, pos));
+      if(d < RADIUS) explodeBarrel(other);
+    });
   }
 
   function splitSlime(body){
@@ -561,7 +626,7 @@
     });
     [...enemiesArr].forEach(e=>{
       const d = Vector.magnitude(Vector.sub(e.position, pos));
-      if(d<KILL_RADIUS) damageEnemy(e, e.hp, 'explosion');
+      if(d<KILL_RADIUS) damageEnemy(e, e.isBoss?3:e.hp, 'explosion');
     });
     pushParticle(pos.x, pos.y-10, '爆発!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
@@ -922,30 +987,61 @@
 
     blocks.forEach(b=> drawRectBody(b, '#5a4536'));
 
+    barrels.forEach(b=>{
+      ctx.save();
+      ctx.translate(b.position.x, b.position.y);
+      ctx.rotate(b.angle);
+      ctx.fillStyle = '#6b4526';
+      ctx.fillRect(-11,-13,22,26);
+      ctx.strokeStyle = '#2a1a0e'; ctx.lineWidth=2;
+      ctx.strokeRect(-11,-13,22,26);
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(-11,-4); ctx.lineTo(11,-4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-11,5); ctx.lineTo(11,5); ctx.stroke();
+      ctx.font='13px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle='#ff6a3d';
+      ctx.fillText('⚠', 0, -1);
+      ctx.restore();
+    });
+
     enemiesArr.forEach(e=>{
       const frozen = e.frictionAir>0.5;
+      const rad = e.isBoss ? 21 : 12;
+      if(e.isBoss){
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(198,138,255,0.25)';
+        ctx.arc(e.position.x,e.position.y,rad+8,0,Math.PI*2); ctx.fill();
+      }
       if(loadedImages.enemy){
         ctx.save();
         ctx.translate(e.position.x, e.position.y);
         if(frozen){ ctx.filter = 'hue-rotate(160deg) saturate(1.3)'; }
-        ctx.drawImage(loadedImages.enemy, -16, -16, 32, 32);
+        const d = rad*2;
+        ctx.drawImage(loadedImages.enemy, -rad, -rad, d, d);
         ctx.restore();
       } else {
         ctx.beginPath();
-        ctx.fillStyle = frozen ? '#7fb8e0' : (e.hp<e.maxHp ? '#e07a5a' : '#c9453a');
-        ctx.arc(e.position.x,e.position.y,12,0,Math.PI*2); ctx.fill();
-        ctx.strokeStyle='#000a'; ctx.lineWidth=2; ctx.stroke();
-        ctx.font='15px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillStyle = frozen ? '#7fb8e0' : (e.isBoss ? '#7a3fc4' : (e.hp<e.maxHp ? '#e07a5a' : '#c9453a'));
+        ctx.arc(e.position.x,e.position.y,rad,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle= e.isBoss ? '#ffd35e' : '#000a'; ctx.lineWidth=e.isBoss?3:2; ctx.stroke();
+        ctx.font=(e.isBoss?'24px':'15px')+' serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillStyle='#fff';
-        ctx.fillText(frozen?'🥶':'👹', e.position.x, e.position.y+1);
+        ctx.fillText(frozen?'🥶':(e.isBoss?'👑':'👹'), e.position.x, e.position.y+1);
       }
       if(e.hitFlash>0){
         ctx.beginPath(); ctx.strokeStyle=`rgba(255,255,255,${e.hitFlash})`; ctx.lineWidth=2;
-        ctx.arc(e.position.x,e.position.y,17,0,Math.PI*2); ctx.stroke();
+        ctx.arc(e.position.x,e.position.y,rad+5,0,Math.PI*2); ctx.stroke();
       }
       if(e.maxHp>1){
-        ctx.font='9px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
-        ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, e.position.y+21);
+        const bw = e.isBoss ? 44 : 24;
+        const by = e.position.y + rad + (e.isBoss?10:9);
+        ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(e.position.x-bw/2, by-3, bw, 6);
+        ctx.fillStyle= e.isBoss ? '#c68aff' : '#7bd66b';
+        ctx.fillRect(e.position.x-bw/2, by-3, bw*Math.max(0,e.hp/e.maxHp), 6);
+        if(e.isBoss){
+          ctx.font='9px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
+          ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, by+11);
+        }
       }
     });
 
