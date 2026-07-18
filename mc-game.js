@@ -378,6 +378,15 @@
   const { Engine, World, Bodies, Body, Composite, Events, Vector } = Matter;
   const canvas = el('game');
   const ctx = canvas.getContext('2d');
+  // 高解像度端末（Retina等）対応：内部の描画バッファをdevicePixelRatio倍に拡大し、
+  // 描画座標はそのまま(390x460)使えるようctx.scaleで補正する。
+  // これをしないと、iPhone等の高DPI端末でCanvas全体（背景・砦・モンスター含む）がぼやけて表示される。
+  (function setupHiDPICanvas(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = 390 * dpr;
+    canvas.height = 460 * dpr;
+    ctx.scale(dpr, dpr);
+  })();
 
   let engine, world;
   let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [];

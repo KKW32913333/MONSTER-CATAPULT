@@ -162,8 +162,8 @@ html,body{
 }
 .monster-card.locked{ opacity:.55; }
 .m-icon{
-  width:54px; height:54px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
-  font-size:26px; background-size:cover; background-position:center;
+  width:72px; height:72px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  font-size:34px; background-size:140%; background-position:center;
   border:2px solid var(--ink); background-color:var(--surface-2);
 }
 .m-body{ flex:1; min-width:0; }
@@ -257,9 +257,9 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
 }
 .next-panel .cap{ font-size:9px; color:var(--mist); letter-spacing:.03em; flex:0 0 auto; font-weight:800; }
 .next-chip{
-  position:relative; width:32px; height:32px; border-radius:50%; flex:0 0 auto;
+  position:relative; width:42px; height:42px; border-radius:50%; flex:0 0 auto;
   background:var(--surface-2);
-  border:2px solid var(--ink); display:flex; align-items:center; justify-content:center; font-size:15px;
+  border:2px solid var(--ink); display:flex; align-items:center; justify-content:center; font-size:19px;
 }
 .next-chip .qty{
   position:absolute; bottom:-5px; right:-5px; background:var(--rose);
@@ -545,24 +545,34 @@ service cloud.firestore{
   const IMAGE_ASSETS = {
     // ステージ背景：ステージ番号の範囲ごとに切り替わります（stageBackgroundKey関数で対応付け）
     backgrounds: {
-      meadow: 'bg-meadow.jpg',   // ステージ1〜2：緑の草原
-      forest: 'bg-forest.jpg',   // ステージ3〜4：森の小川
-      cave:   'bg-cave.jpg',     // ステージ5〜7：水晶の洞窟
-      snow:   'bg-snow.jpg',     // ステージ8〜10：雪山の村
+      meadow:  'bg-meadow.jpg',   // ステージ1〜2：緑の草原
+      forest:  'bg-forest.jpg',   // ステージ3〜4：森の小川
+      cave:    'bg-cave.jpg',     // ステージ6〜7：水晶の洞窟
+      snow:    'bg-snow.jpg',     // ステージ8〜9：雪山の村
+      volcano: 'bg-volcano.jpg',  // ボスステージ（5・10）専用：溶岩の渓谷
     },
-    block: null,         // 砦ブロックのテクスチャ（推奨: 正方形, png）
+    // 砦ブロックのテクスチャ：背景と同じテーマ区分で切り替わります
+    blocks: {
+      meadow:  'block-meadow.jpg',
+      forest:  'block-forest.jpg',
+      cave:    'block-cave.jpg',
+      snow:    'block-snow.jpg',
+      volcano: 'block-volcano.jpg',
+    },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
-    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 128x128, png/透過）
-      slime:null, dragon:null, icegolem:null, spikeball:null, skeleton:null, centaur:null,
+    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
+      slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:null,
+      spikeball:'monster-spikeball.png', skeleton:null, centaur:null,
     },
   };
   function stageBackgroundKey(stageN){
+    if(isBossStage(stageN)) return 'volcano';
     if(stageN <= 2) return 'meadow';
     if(stageN <= 4) return 'forest';
     if(stageN <= 7) return 'cave';
     return 'snow';
   }
-  const loadedImages = { monsters:{}, backgrounds:{} };
+  const loadedImages = { monsters:{}, backgrounds:{}, blocks:{} };
   function preloadImages(){
     const tryLoad = (key, path, target)=>{
       if(!path) return;
@@ -572,22 +582,24 @@ service cloud.firestore{
       img.src = path;
     };
     Object.keys(IMAGE_ASSETS.backgrounds).forEach(k=> tryLoad(k, IMAGE_ASSETS.backgrounds[k], loadedImages.backgrounds));
-    tryLoad('block', IMAGE_ASSETS.block, loadedImages);
+    Object.keys(IMAGE_ASSETS.blocks).forEach(k=> tryLoad(k, IMAGE_ASSETS.blocks[k], loadedImages.blocks));
     tryLoad('enemy', IMAGE_ASSETS.enemy, loadedImages);
     MONSTER_ORDER.forEach(k=> tryLoad(k, IMAGE_ASSETS.monsters[k], loadedImages.monsters));
   }
   // DOM側（モンスターカード等）で画像を使う場合のCSS背景ヘルパー
   function monsterIconStyle(key){
     const path = IMAGE_ASSETS.monsters[key];
-    return path ? `background-image:url('${path}'); background-size:cover; background-position:center;` : '';
+    return path ? `background-image:url('${path}'); background-size:145%; background-position:center;` : '';
   }
 
-  const ANCHOR = {x:60, y:360};
-  const GROUND_Y = 440;
+  const ANCHOR = {x:66, y:300};
+  const GROUND_Y = 392;
   const MAX_PULL = 78;
   const LAUNCH_SCALE = 0.17;
   const TURN_DURATION = 3400;
   const W = 390, H = 460;
+  const BLOCK_W = 34, BLOCK_H = 34, BLOCK_GAP = 4;
+  const FORT_RIGHT_EDGE = W - 46;
 
   // ---------- プレイヤー永続状態 ----------
   function defaultState(){
@@ -857,9 +869,18 @@ service cloud.firestore{
   const { Engine, World, Bodies, Body, Composite, Events, Vector } = Matter;
   const canvas = el('game');
   const ctx = canvas.getContext('2d');
+  // 高解像度端末（Retina等）対応：内部の描画バッファをdevicePixelRatio倍に拡大し、
+  // 描画座標はそのまま(390x460)使えるようctx.scaleで補正する。
+  // これをしないと、iPhone等の高DPI端末でCanvas全体（背景・砦・モンスター含む）がぼやけて表示される。
+  (function setupHiDPICanvas(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = 390 * dpr;
+    canvas.height = 460 * dpr;
+    ctx.scale(dpr, dpr);
+  })();
 
   let engine, world;
-  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [];
+  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [];
   let current = null;
   let ammoQueue = [], queueIndex = 0;
   let stageScore = 0, currentStage = 1, totalEnemiesThisStage = 0;
@@ -870,56 +891,139 @@ service cloud.firestore{
   let toRemove = [], particles = [], explosions = [];
   let gameClock = 0;
   let killsThisTurn = 0;
+  let shakeAmount = 0;
+  let trailPoints = [];
+  let debris = [];
+  function triggerShake(amount){ shakeAmount = Math.max(shakeAmount, amount); }
+  function spawnDebris(x,y,color,count){
+    for(let i=0;i<count;i++){
+      const ang = Math.random()*Math.PI*2;
+      const spd = 1.5+Math.random()*3.5;
+      debris.push({
+        x,y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd-1.5,
+        t:0, life:500+Math.random()*300, color, size:2+Math.random()*3,
+        rot: Math.random()*Math.PI*2, vrot:(Math.random()-0.5)*0.3,
+      });
+    }
+  }
+
+  function isBossStage(n){ return n % 5 === 0; }
+  function bossHpForStage(n){ return n >= 10 ? 7 : 4; }
 
   function stageParams(n){
     const capped = Math.min(n, 4);
+    const boss = isBossStage(n);
     return {
-      rows: 2+capped,
-      baseCount: 3+capped,
+      rows: 2+capped + (boss?1:0),
+      baseCount: 3+capped + (boss?1:0),
       enemyHp: n>=7 ? 2 : 1,
-      ammoLen: Math.max(3, 4+Math.min(n,5)),
+      ammoLen: Math.max(3, 4+Math.min(n,5)) + (boss?2:0),
       threshBonus: Math.min(n,10)*0.035,
+      isBoss: boss,
+      barrelCount: n<3 ? 0 : (boss ? 2 : 1),
     };
   }
   function rowBlocksX(count){
-    const arr=[]; for(let i=0;i<count;i++) arr.push(349 - i*30); return arr;
+    const arr=[]; for(let i=0;i<count;i++) arr.push(FORT_RIGHT_EDGE - i*(BLOCK_W+BLOCK_GAP)); return arr;
   }
 
-  function buildFortress(sp){
-    const rowsData = [];
-    for(let r=0;r<sp.rows;r++){
-      const count = sp.baseCount - r;
-      if(count<1) break;
-      const y = 400 - r*28;
-      const xs = rowBlocksX(count);
-      const h = (r===sp.rows-1) ? 24 : 28;
-      xs.forEach(x=> addBlock(x,y,26,h));
-      rowsData.push({r,y,xs,count});
+  let castleDecor = null; // 旗の描画用に、塔の最上段ブロックを保持
+
+  function buildFortress(sp, stageN){
+    castleDecor = { flags: [] };
+    const baseY = GROUND_Y - BLOCK_H/2 - 2;
+    const wallCount = sp.baseCount;             // 城壁の横幅（ブロック数）
+    const wallRows = 2;                          // 城壁の厚み（段数）
+    const towerRows = Math.min(sp.rows, 4);       // 塔が城壁の上にさらに積む段数（画面上部にはみ出さないよう上限あり）
+    const xs = rowBlocksX(wallCount);
+    const leftX = Math.min.apply(null, xs);
+    const rightX = Math.max.apply(null, xs);
+
+    // ① 城壁（横方向に2段）
+    for(let r=0; r<wallRows; r++){
+      const y = baseY - r*(BLOCK_H+BLOCK_GAP);
+      xs.forEach(x=> addBlock(x,y,BLOCK_W,BLOCK_H));
     }
-    const top = rowsData[rowsData.length-1];
-    const apexX = (top.xs[0]+top.xs[top.xs.length-1])/2;
-    addEnemy(apexX, top.y-21, sp.enemyHp);
+    const wallTopY = baseY - (wallRows-1)*(BLOCK_H+BLOCK_GAP);
 
-    const bottom = rowsData[0];
-    addEnemy(Math.min.apply(null,bottom.xs)-25, 408, sp.enemyHp);
-    addEnemy(Math.max.apply(null,bottom.xs)+25, 408, sp.enemyHp);
+    // ② 城壁の上の胸壁（凹凸）。1つおきに小さいブロックを乗せる（隙間には敵を立たせる）
+    for(let i=0;i<xs.length;i+=2){
+      addBlock(xs[i], wallTopY-(BLOCK_H+BLOCK_GAP)/2-7, 16, 14, true);
+    }
 
-    for(let r=1;r<=sp.rows-2;r++){
-      const row = rowsData[r];
-      const cx = row.xs.reduce((a,b)=>a+b,0)/row.xs.length;
-      addEnemy(cx, row.y-4, sp.enemyHp);
+    // ③ 両端の塔（城壁より高く積み上げる）
+    function buildTower(x, extraRows){
+      let topBlock = null;
+      for(let r=wallRows; r<wallRows+extraRows; r++){
+        const y = baseY - r*(BLOCK_H+BLOCK_GAP);
+        topBlock = addBlock(x,y,BLOCK_W,BLOCK_H);
+      }
+      const topY = baseY - (wallRows+extraRows-1)*(BLOCK_H+BLOCK_GAP);
+      return {topBlock, topY};
+    }
+    const leftTower = buildTower(leftX, towerRows);
+    const rightTower = buildTower(rightX, towerRows);
+    castleDecor.flags.push(leftTower.topBlock, rightTower.topBlock);
+    castleDecor.gate = {x:(leftX+rightX)/2, y:baseY+BLOCK_H/2+2};
+
+    // ④ ボスステージ：中央にひときわ高い主塔（キープ）
+    let keep = null, keepX = null;
+    if(sp.isBoss){
+      keepX = (leftX+rightX)/2;
+      keep = buildTower(keepX, Math.min(towerRows+1, 5));
+      castleDecor.flags.push(keep.topBlock);
+    }
+
+    // ---------- 敵配置（すべて構造物の"上"、隣接ブロックと重ならない位置） ----------
+    if(sp.isBoss){
+      addBoss(keepX, keep.topY-BLOCK_H/2-26, bossHpForStage(stageN));
+      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
+      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
+    } else {
+      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
+      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
+    }
+    // 城壁の上（胸壁の隙間＝奇数インデックス）に立つ雑魚。
+    // 両端の塔・中央キープの柱が通る位置（leftX/rightX/keepX付近）は必ず除外する。
+    const excludeXs = [leftX, rightX];
+    if(sp.isBoss) excludeXs.push(keepX);
+    const wallEnemyCount = Math.max(1, Math.min(4, sp.rows-1));
+    const oddSlots = [];
+    for(let i=1;i<xs.length;i+=2){
+      const tooClose = excludeXs.some(ex=> Math.abs(xs[i]-ex) < BLOCK_W);
+      if(!tooClose) oddSlots.push(xs[i]);
+    }
+    for(let i=0;i<wallEnemyCount && i<oddSlots.length;i++){
+      const idx = Math.floor(i*(oddSlots.length/wallEnemyCount));
+      addEnemy(oddSlots[idx], wallTopY-BLOCK_H/2-15, sp.enemyHp);
+    }
+
+    // 爆発樽の配置（ステージ3以降。城壁の脇の地面に設置）
+    for(let i=0;i<sp.barrelCount;i++){
+      addBarrel(leftX - BLOCK_W/2 - 30 - i*34, GROUND_Y-16);
     }
   }
 
-  function addBlock(x,y,w,h){
-    const b = Bodies.rectangle(x,y,w,h,{density:0.0015, friction:0.6, restitution:0.05, label:'block'});
-    b.blockW=w; b.blockH=h;
+  function addBlock(x,y,w,h,isCrenel){
+    const b = Bodies.rectangle(x,y,w,h,{density:isCrenel?0.0008:0.0015, friction:0.6, restitution:0.05, label:'block'});
+    b.blockW=w; b.blockH=h; b.isCrenel=!!isCrenel;
     blocks.push(b); World.add(world,b);
+    return b;
   }
   function addEnemy(x,y,hp){
-    const e = Bodies.circle(x,y,9,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
-    e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0;
+    const e = Bodies.circle(x,y,12,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
+    e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0; e.isBoss=false;
     enemiesArr.push(e); World.add(world,e);
+  }
+  function addBoss(x,y,hp){
+    const e = Bodies.circle(x,y,21,{density:0.0035, friction:0.5, restitution:0.1, label:'enemy', frictionAir:0.01});
+    e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0; e.isBoss=true;
+    enemiesArr.push(e); World.add(world,e);
+  }
+  function addBarrel(x,y){
+    const b = Bodies.rectangle(x,y,22,26,{density:0.0012, friction:0.6, restitution:0.1, label:'barrel'});
+    b.exploded=false;
+    barrels.push(b); World.add(world,b);
   }
 
   function buildAmmoQueue(n){
@@ -935,16 +1039,17 @@ service cloud.firestore{
     engine = Engine.create();
     engine.gravity.y = 1;
     world = engine.world;
-    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[];
-    toRemove=[]; particles=[]; explosions=[];
+    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[]; castleDecor=null;
+    toRemove=[]; particles=[]; explosions=[]; debris=[]; trailPoints=[]; shakeAmount=0;
     gameClock=0; killsThisTurn=0; stageScore=0; stageOver=false;
     dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
+    buildGroundDecor();
 
     const ground = Bodies.rectangle(W/2, GROUND_Y+15, W+40, 30, {isStatic:true, label:'ground', friction:0.9});
     World.add(world, ground);
 
     const sp = stageParams(n);
-    buildFortress(sp);
+    buildFortress(sp, n);
     totalEnemiesThisStage = enemiesArr.length;
 
     ammoQueue = buildAmmoQueue(n);
@@ -985,6 +1090,12 @@ service cloud.firestore{
         damageEnemy(a, 1, 'proj');
       }
     }
+    if(a.label==='barrel' && barrels.includes(a) && !a.exploded){
+      const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
+      if(relSpeed > 1.0 && b.label!=='ground'){
+        explodeBarrel(a);
+      }
+    }
     if(!current) return;
     if(a===current.body && a.label==='proj_slime' && !current.hasSplit && b.label!=='proj_slime'){
       current.hasSplit = true; splitSlime(a);
@@ -1003,7 +1114,9 @@ service cloud.firestore{
       killEnemy(body, source);
     } else {
       body.hitFlash = 1.0;
-      pushParticle(body.position.x, body.position.y-14, 'HIT', '#ffb057');
+      pushParticle(body.position.x, body.position.y-14, body.isBoss?`HIT ${body.hp}/${body.maxHp}`:'HIT', '#ffb057');
+      spawnDebris(body.position.x, body.position.y, '#ffb057', 4);
+      triggerShake(3);
     }
   }
 
@@ -1011,15 +1124,52 @@ service cloud.firestore{
     toRemove.push(body);
     const idx = enemiesArr.indexOf(body);
     if(idx>=0) enemiesArr.splice(idx,1);
-    const points = 100;
+    const points = body.isBoss ? body.maxHp*150 : 100;
     stageScore += points;
     killsThisTurn++;
     bumpMissionTrack('anyKill', 1);
     if(current) bumpMissionTrack('type:'+current.type, 1);
     if(source==='explosion') bumpMissionTrack('explosionKill', 1);
-    pushParticle(body.position.x, body.position.y, '+'+points, '#f0c04a');
+    pushParticle(body.position.x, body.position.y, (body.isBoss?'BOSS撃破 +':'+')+points, body.isBoss?'#ffd35e':'#f0c04a');
+    spawnDebris(body.position.x, body.position.y, body.isBoss?'#c68aff':'#c9453a', body.isBoss?16:8);
+    triggerShake(body.isBoss?16:6);
+    if(body.isBoss){
+      explosions.push({x:body.position.x, y:body.position.y, t:0});
+    }
     updateHUD();
     if(enemiesArr.length===0 && !stageOver){ endStage(true); }
+  }
+
+
+  function explodeBarrel(barrel){
+    barrel.exploded = true;
+    const idx = barrels.indexOf(barrel);
+    if(idx>=0) barrels.splice(idx,1);
+    toRemove.push(barrel);
+    const pos = {x:barrel.position.x, y:barrel.position.y};
+    const RADIUS=64, FORCE=0.04, KILL_RADIUS=40;
+    [...blocks, ...enemiesArr, ...fragments].forEach(body=>{
+      const d = Vector.magnitude(Vector.sub(body.position, pos));
+      if(d < RADIUS){
+        const dir = Vector.normalise(Vector.sub(body.position, pos));
+        const power = (1-d/RADIUS) * FORCE;
+        Body.applyForce(body, body.position, {x:dir.x*power, y:dir.y*power-power*0.25});
+      }
+    });
+    [...enemiesArr].forEach(e=>{
+      const d = Vector.magnitude(Vector.sub(e.position, pos));
+      if(d < KILL_RADIUS) damageEnemy(e, e.isBoss?2:e.hp, 'explosion');
+    });
+    pushParticle(pos.x, pos.y-10, '誘爆!', '#ff8a3d');
+    explosions.push({x:pos.x, y:pos.y, t:0});
+    spawnDebris(pos.x, pos.y, '#ff8a3d', 14);
+    triggerShake(12);
+    // 連鎖：範囲内の他の樽も誘爆させる
+    [...barrels].forEach(other=>{
+      if(other.exploded) return;
+      const d = Vector.magnitude(Vector.sub(other.position, pos));
+      if(d < RADIUS) explodeBarrel(other);
+    });
   }
 
   function splitSlime(body){
@@ -1034,6 +1184,7 @@ service cloud.firestore{
       World.add(world, frag); fragments.push(frag);
     });
     pushParticle(pos.x, pos.y-14, '分裂!', '#7bd66b');
+    spawnDebris(pos.x, pos.y, '#7bd66b', 6);
   }
 
   function explodeAt(pos){
@@ -1048,10 +1199,12 @@ service cloud.firestore{
     });
     [...enemiesArr].forEach(e=>{
       const d = Vector.magnitude(Vector.sub(e.position, pos));
-      if(d<KILL_RADIUS) damageEnemy(e, e.hp, 'explosion');
+      if(d<KILL_RADIUS) damageEnemy(e, e.isBoss?3:e.hp, 'explosion');
     });
     pushParticle(pos.x, pos.y-10, '爆発!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
+    spawnDebris(pos.x, pos.y, '#ff8a3d', 16);
+    triggerShake(14);
   }
 
   function freezeAt(pos){
@@ -1185,6 +1338,7 @@ service cloud.firestore{
     killsThisTurn = 0;
     queueIndex++;
     current = null;
+    trailPoints = [];
     if(queueIndex >= ammoQueue.length){ if(!stageOver) endStage(false); }
     else spawnNext();
     updateHUD(); renderQueue();
@@ -1276,9 +1430,26 @@ service cloud.firestore{
 
     enemiesArr.forEach(e=>{ if(e.hitFlash>0) e.hitFlash = Math.max(0, e.hitFlash - dt/300); });
 
+    shakeAmount = Math.max(0, shakeAmount - dt*0.045);
+
+    for(let i=debris.length-1;i>=0;i--){
+      const d = debris[i];
+      d.t += dt;
+      d.x += d.vx; d.y += d.vy; d.vy += 0.15; d.rot += d.vrot;
+      if(d.t > d.life) debris.splice(i,1);
+    }
+
+    if(current && current.launched){
+      trailPoints.push({x:current.body.position.x, y:current.body.position.y, t:0});
+      if(trailPoints.length>14) trailPoints.shift();
+    }
+    trailPoints.forEach(p=> p.t+=dt);
+    trailPoints = trailPoints.filter(p=> p.t<260);
+
     if(current && current.launched){
       turnTimer -= dt;
-      const offscreen = current.body.position.y>H+100 || current.body.position.x>W+140;
+      const p = current.body.position;
+      const offscreen = p.y>H+100 || p.x>W+140 || p.x<-140 || p.y<-220;
       const stillExists = Composite.get(world, current.body.id, 'body');
       if(turnTimer<=0 || offscreen || !stillExists){
         if(stillExists) World.remove(world, current.body);
@@ -1286,6 +1457,7 @@ service cloud.firestore{
         killsThisTurn = 0;
         queueIndex++;
         current = null;
+        trailPoints = [];
         if(queueIndex >= ammoQueue.length){ if(!stageOver) endStage(false); }
         else spawnNext();
         renderQueue();
@@ -1301,8 +1473,9 @@ service cloud.firestore{
     ctx.save();
     ctx.translate(b.position.x, b.position.y);
     ctx.rotate(b.angle);
-    if(loadedImages.block){
-      ctx.drawImage(loadedImages.block, -b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    const blockImg = loadedImages.blocks[stageBackgroundKey(currentStage)];
+    if(blockImg){
+      ctx.drawImage(blockImg, -b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     } else {
       ctx.fillStyle = color;
       ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
@@ -1312,35 +1485,92 @@ service cloud.firestore{
     ctx.restore();
   }
 
+  const groundColors = {
+    meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
+    cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
+    volcano:{a:'#4a1408', b:'#180402'},
+  };
+  let groundDecor = null;
+  function buildGroundDecor(){
+    groundDecor = [];
+    for(let i=0;i<22;i++){
+      groundDecor.push({
+        x: Math.random()*W, y: GROUND_Y + 6 + Math.random()*(H-GROUND_Y-10),
+        type: Math.random()<0.55 ? 'rock' : 'grass',
+        s: 0.7+Math.random()*0.8,
+      });
+    }
+  }
+
+  function drawFallbackSky(){
+    const g = ctx.createLinearGradient(0,0,0,GROUND_Y);
+    g.addColorStop(0,'#3a4678'); g.addColorStop(1,'#a8909a');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,GROUND_Y);
+    // 太陽のグロー
+    const sx=300, sy=70;
+    [ [140,0.04],[100,0.06],[60,0.10],[30,0.16] ].forEach(([r,a])=>{
+      ctx.beginPath(); ctx.fillStyle = `rgba(255,220,160,${a})`;
+      ctx.arc(sx,sy,r,0,Math.PI*2); ctx.fill();
+    });
+    // 雲
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    [[90,90,1.0],[230,50,0.7],[150,140,0.5]].forEach(([cx,cy,s])=>{
+      [[0,0,26],[20,4,20],[-18,6,18],[8,-10,16]].forEach(([dx,dy,r])=>{
+        ctx.beginPath(); ctx.arc(cx+dx*s,cy+dy*s,r*s,0,Math.PI*2); ctx.fill();
+      });
+    });
+  }
+
   function render(){
     ctx.clearRect(0,0,W,H);
+    ctx.save();
+    if(shakeAmount>0.3){
+      const sx=(Math.random()-0.5)*shakeAmount, sy=(Math.random()-0.5)*shakeAmount;
+      ctx.translate(sx,sy);
+    }
     const bgImg = loadedImages.backgrounds[stageBackgroundKey(currentStage)];
     if(bgImg){
       ctx.drawImage(bgImg, 0, 0, W, H);
-      ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0,0,W,H); // 手前の要素を見やすくする薄暗め
+      ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(0,0,W,H); // 手前の要素を見やすくする薄暗め
     } else {
-      ctx.fillStyle = '#0d0906'; ctx.fillRect(0,0,W,H);
+      drawFallbackSky();
     }
 
+    if(!groundDecor) buildGroundDecor();
+
     const g = ctx.createLinearGradient(0,GROUND_Y,0,H);
-    const groundColors = {
-      meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
-      cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
-    };
     const gc = groundColors[stageBackgroundKey(currentStage)] || {a:'#3a2416', b:'#150d08'};
     g.addColorStop(0,gc.a); g.addColorStop(1,gc.b);
     ctx.fillStyle = g; ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
-    ctx.strokeStyle = 'rgba(255,122,61,0.25)';
+    ctx.strokeStyle = 'rgba(255,200,150,0.35)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(0,GROUND_Y); ctx.lineTo(W,GROUND_Y); ctx.stroke();
+    // 地面のディテール（岩・草）
+    groundDecor.forEach(d=>{
+      if(d.type==='rock'){
+        ctx.beginPath(); ctx.fillStyle='rgba(0,0,0,0.28)';
+        ctx.ellipse(d.x,d.y,4*d.s,2.4*d.s,0,0,Math.PI*2); ctx.fill();
+      } else {
+        ctx.strokeStyle='rgba(110,160,90,0.55)'; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x-3*d.s,d.y-9*d.s); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x+3*d.s,d.y-8*d.s); ctx.stroke();
+      }
+    });
 
-    ctx.strokeStyle = '#6b4a30'; ctx.lineWidth=5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(38,GROUND_Y); ctx.lineTo(ANCHOR.x,ANCHOR.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(82,GROUND_Y); ctx.lineTo(ANCHOR.x,ANCHOR.y); ctx.stroke();
+    // カタパルト（拡大・存在感）
+    const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
+    ctx.lineCap='round';
+    ctx.strokeStyle = '#503a22'; ctx.lineWidth=9;
+    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = '#78552f'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.fillStyle='#3c2a1a'; ctx.ellipse(ax,baseY+2,16,8,0,0,Math.PI*2); ctx.fill();
 
     if(dragging && current && dragPoint){
       ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
-      ctx.beginPath(); ctx.moveTo(38,GROUND_Y-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(82,GROUND_Y-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax-30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax+30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
       ctx.setLineDash([]);
       const dx=ANCHOR.x-dragPoint.x, dy=ANCHOR.y-dragPoint.y;
       if(trajectoryHint){
@@ -1356,32 +1586,93 @@ service cloud.firestore{
       }
     }
 
-    blocks.forEach(b=> drawRectBody(b, '#5a4536'));
+    if(castleDecor && castleDecor.gate){
+      const gx=castleDecor.gate.x, gy=castleDecor.gate.y;
+      ctx.fillStyle = 'rgba(10,6,4,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(gx-15, gy);
+      ctx.lineTo(gx-15, gy-26);
+      ctx.arc(gx, gy-26, 15, Math.PI, 0);
+      ctx.lineTo(gx+15, gy);
+      ctx.closePath(); ctx.fill();
+    }
+
+    blocks.forEach(b=> drawRectBody(b, b.isCrenel ? '#6b5546' : '#5a4536'));
+
+    // 旗（塔の最上段ブロックに追従して描く。ブロックが崩れると一緒に傾く）
+    if(castleDecor && castleDecor.flags){
+      castleDecor.flags.forEach(fb=>{
+        if(!fb || !blocks.includes(fb)) return;
+        ctx.save();
+        ctx.translate(fb.position.x, fb.position.y);
+        ctx.rotate(fb.angle);
+        ctx.strokeStyle = '#3a2a1a'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0,-BLOCK_H/2); ctx.lineTo(0,-BLOCK_H/2-20); ctx.stroke();
+        ctx.fillStyle = '#e2483a';
+        ctx.beginPath();
+        ctx.moveTo(0,-BLOCK_H/2-20);
+        ctx.lineTo(16,-BLOCK_H/2-16);
+        ctx.lineTo(0,-BLOCK_H/2-11);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    barrels.forEach(b=>{
+      ctx.save();
+      ctx.translate(b.position.x, b.position.y);
+      ctx.rotate(b.angle);
+      ctx.fillStyle = '#6b4526';
+      ctx.fillRect(-11,-13,22,26);
+      ctx.strokeStyle = '#2a1a0e'; ctx.lineWidth=2;
+      ctx.strokeRect(-11,-13,22,26);
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(-11,-4); ctx.lineTo(11,-4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-11,5); ctx.lineTo(11,5); ctx.stroke();
+      ctx.font='13px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle='#ff6a3d';
+      ctx.fillText('⚠', 0, -1);
+      ctx.restore();
+    });
 
     enemiesArr.forEach(e=>{
       const frozen = e.frictionAir>0.5;
+      const rad = e.isBoss ? 21 : 12;
+      if(e.isBoss){
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(198,138,255,0.25)';
+        ctx.arc(e.position.x,e.position.y,rad+8,0,Math.PI*2); ctx.fill();
+      }
       if(loadedImages.enemy){
         ctx.save();
         ctx.translate(e.position.x, e.position.y);
         if(frozen){ ctx.filter = 'hue-rotate(160deg) saturate(1.3)'; }
-        ctx.drawImage(loadedImages.enemy, -12, -12, 24, 24);
+        const d = rad*2;
+        ctx.drawImage(loadedImages.enemy, -rad, -rad, d, d);
         ctx.restore();
       } else {
         ctx.beginPath();
-        ctx.fillStyle = frozen ? '#7fb8e0' : (e.hp<e.maxHp ? '#e07a5a' : '#c9453a');
-        ctx.arc(e.position.x,e.position.y,9,0,Math.PI*2); ctx.fill();
-        ctx.strokeStyle='#000a'; ctx.lineWidth=1; ctx.stroke();
-        ctx.font='11px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillStyle = frozen ? '#7fb8e0' : (e.isBoss ? '#7a3fc4' : (e.hp<e.maxHp ? '#e07a5a' : '#c9453a'));
+        ctx.arc(e.position.x,e.position.y,rad,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle= e.isBoss ? '#ffd35e' : '#000a'; ctx.lineWidth=e.isBoss?3:2; ctx.stroke();
+        ctx.font=(e.isBoss?'24px':'15px')+' serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillStyle='#fff';
-        ctx.fillText(frozen?'🥶':'👹', e.position.x, e.position.y+1);
+        ctx.fillText(frozen?'🥶':(e.isBoss?'👑':'👹'), e.position.x, e.position.y+1);
       }
       if(e.hitFlash>0){
         ctx.beginPath(); ctx.strokeStyle=`rgba(255,255,255,${e.hitFlash})`; ctx.lineWidth=2;
-        ctx.arc(e.position.x,e.position.y,13,0,Math.PI*2); ctx.stroke();
+        ctx.arc(e.position.x,e.position.y,rad+5,0,Math.PI*2); ctx.stroke();
       }
       if(e.maxHp>1){
-        ctx.font='8px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
-        ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, e.position.y+16);
+        const bw = e.isBoss ? 44 : 24;
+        const by = e.position.y + rad + (e.isBoss?10:9);
+        ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(e.position.x-bw/2, by-3, bw, 6);
+        ctx.fillStyle= e.isBoss ? '#c68aff' : '#7bd66b';
+        ctx.fillRect(e.position.x-bw/2, by-3, bw*Math.max(0,e.hp/e.maxHp), 6);
+        if(e.isBoss){
+          ctx.font='9px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
+          ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, by+11);
+        }
       }
     });
 
@@ -1389,12 +1680,20 @@ service cloud.firestore{
 
     if(current){
       const def = MONSTER_DEFS[current.type];
+      trailPoints.forEach((p,i)=>{
+        const a = Math.max(0, 1 - p.t/260) * 0.35;
+        const r = 3 + (i/trailPoints.length)*4;
+        ctx.beginPath(); ctx.fillStyle = def.color; ctx.globalAlpha = a;
+        ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+      });
       const img = loadedImages.monsters[current.type];
       if(img){
+        const vr = def.radius * 1.9; // 見た目は当たり判定より大きく表示
         ctx.save();
         ctx.translate(current.body.position.x, current.body.position.y);
         ctx.rotate(current.body.angle);
-        ctx.drawImage(img, -def.radius, -def.radius, def.radius*2, def.radius*2);
+        ctx.drawImage(img, -vr, -vr, vr*2, vr*2);
         ctx.restore();
       } else {
         ctx.beginPath(); ctx.fillStyle=def.color;
@@ -1423,6 +1722,19 @@ service cloud.firestore{
       ctx.fillText(p.text, p.x, p.y - p.t/40);
       ctx.globalAlpha = 1;
     });
+
+    debris.forEach(d=>{
+      const a = Math.max(0, 1 - d.t/d.life);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.rot);
+      ctx.fillStyle = d.color;
+      ctx.fillRect(-d.size/2,-d.size/2,d.size,d.size);
+      ctx.restore();
+    });
+
+    ctx.restore(); // シェイク用のtranslateを解除
   }
 
   // ---------- 起動 ----------
