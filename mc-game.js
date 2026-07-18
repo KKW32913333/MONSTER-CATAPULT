@@ -91,12 +91,14 @@
     return path ? `background-image:url('${path}'); background-size:cover; background-position:center;` : '';
   }
 
-  const ANCHOR = {x:60, y:360};
-  const GROUND_Y = 440;
+  const ANCHOR = {x:66, y:300};
+  const GROUND_Y = 392;
   const MAX_PULL = 78;
   const LAUNCH_SCALE = 0.17;
   const TURN_DURATION = 3400;
   const W = 390, H = 460;
+  const BLOCK_W = 34, BLOCK_H = 34, BLOCK_GAP = 4;
+  const FORT_RIGHT_EDGE = W - 46;
 
   // ---------- プレイヤー永続状態 ----------
   function defaultState(){
@@ -391,32 +393,33 @@
     };
   }
   function rowBlocksX(count){
-    const arr=[]; for(let i=0;i<count;i++) arr.push(349 - i*30); return arr;
+    const arr=[]; for(let i=0;i<count;i++) arr.push(FORT_RIGHT_EDGE - i*(BLOCK_W+BLOCK_GAP)); return arr;
   }
 
   function buildFortress(sp){
     const rowsData = [];
+    const baseY = GROUND_Y - BLOCK_H/2 - 2;
     for(let r=0;r<sp.rows;r++){
       const count = sp.baseCount - r;
       if(count<1) break;
-      const y = 400 - r*28;
+      const y = baseY - r*(BLOCK_H+BLOCK_GAP);
       const xs = rowBlocksX(count);
-      const h = (r===sp.rows-1) ? 24 : 28;
-      xs.forEach(x=> addBlock(x,y,26,h));
+      const h = (r===sp.rows-1) ? BLOCK_H-4 : BLOCK_H;
+      xs.forEach(x=> addBlock(x,y,BLOCK_W,h));
       rowsData.push({r,y,xs,count});
     }
     const top = rowsData[rowsData.length-1];
     const apexX = (top.xs[0]+top.xs[top.xs.length-1])/2;
-    addEnemy(apexX, top.y-21, sp.enemyHp);
+    addEnemy(apexX, top.y-BLOCK_H/2-13, sp.enemyHp);
 
     const bottom = rowsData[0];
-    addEnemy(Math.min.apply(null,bottom.xs)-25, 408, sp.enemyHp);
-    addEnemy(Math.max.apply(null,bottom.xs)+25, 408, sp.enemyHp);
+    addEnemy(Math.min.apply(null,bottom.xs)-BLOCK_W/2-16, GROUND_Y-11, sp.enemyHp);
+    addEnemy(Math.max.apply(null,bottom.xs)+BLOCK_W/2+16, GROUND_Y-11, sp.enemyHp);
 
     for(let r=1;r<=sp.rows-2;r++){
       const row = rowsData[r];
       const cx = row.xs.reduce((a,b)=>a+b,0)/row.xs.length;
-      addEnemy(cx, row.y-4, sp.enemyHp);
+      addEnemy(cx, row.y-6, sp.enemyHp);
     }
   }
 
@@ -426,7 +429,7 @@
     blocks.push(b); World.add(world,b);
   }
   function addEnemy(x,y,hp){
-    const e = Bodies.circle(x,y,9,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
+    const e = Bodies.circle(x,y,12,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
     e.baseFrictionAir=0.01; e.hp=hp; e.maxHp=hp; e.hitFlash=0;
     enemiesArr.push(e); World.add(world,e);
   }
@@ -448,6 +451,7 @@
     toRemove=[]; particles=[]; explosions=[];
     gameClock=0; killsThisTurn=0; stageScore=0; stageOver=false;
     dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
+    buildGroundDecor();
 
     const ground = Bodies.rectangle(W/2, GROUND_Y+15, W+40, 30, {isStatic:true, label:'ground', friction:0.9});
     World.add(world, ground);
@@ -821,35 +825,86 @@
     ctx.restore();
   }
 
+  const groundColors = {
+    meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
+    cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
+  };
+  let groundDecor = null;
+  function buildGroundDecor(){
+    groundDecor = [];
+    for(let i=0;i<22;i++){
+      groundDecor.push({
+        x: Math.random()*W, y: GROUND_Y + 6 + Math.random()*(H-GROUND_Y-10),
+        type: Math.random()<0.55 ? 'rock' : 'grass',
+        s: 0.7+Math.random()*0.8,
+      });
+    }
+  }
+
+  function drawFallbackSky(){
+    const g = ctx.createLinearGradient(0,0,0,GROUND_Y);
+    g.addColorStop(0,'#3a4678'); g.addColorStop(1,'#a8909a');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,GROUND_Y);
+    // 太陽のグロー
+    const sx=300, sy=70;
+    [ [140,0.04],[100,0.06],[60,0.10],[30,0.16] ].forEach(([r,a])=>{
+      ctx.beginPath(); ctx.fillStyle = `rgba(255,220,160,${a})`;
+      ctx.arc(sx,sy,r,0,Math.PI*2); ctx.fill();
+    });
+    // 雲
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    [[90,90,1.0],[230,50,0.7],[150,140,0.5]].forEach(([cx,cy,s])=>{
+      [[0,0,26],[20,4,20],[-18,6,18],[8,-10,16]].forEach(([dx,dy,r])=>{
+        ctx.beginPath(); ctx.arc(cx+dx*s,cy+dy*s,r*s,0,Math.PI*2); ctx.fill();
+      });
+    });
+  }
+
   function render(){
     ctx.clearRect(0,0,W,H);
     const bgImg = loadedImages.backgrounds[stageBackgroundKey(currentStage)];
     if(bgImg){
       ctx.drawImage(bgImg, 0, 0, W, H);
-      ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0,0,W,H); // 手前の要素を見やすくする薄暗め
+      ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(0,0,W,H); // 手前の要素を見やすくする薄暗め
     } else {
-      ctx.fillStyle = '#0d0906'; ctx.fillRect(0,0,W,H);
+      drawFallbackSky();
     }
 
+    if(!groundDecor) buildGroundDecor();
+
     const g = ctx.createLinearGradient(0,GROUND_Y,0,H);
-    const groundColors = {
-      meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
-      cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
-    };
     const gc = groundColors[stageBackgroundKey(currentStage)] || {a:'#3a2416', b:'#150d08'};
     g.addColorStop(0,gc.a); g.addColorStop(1,gc.b);
     ctx.fillStyle = g; ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
-    ctx.strokeStyle = 'rgba(255,122,61,0.25)';
+    ctx.strokeStyle = 'rgba(255,200,150,0.35)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(0,GROUND_Y); ctx.lineTo(W,GROUND_Y); ctx.stroke();
+    // 地面のディテール（岩・草）
+    groundDecor.forEach(d=>{
+      if(d.type==='rock'){
+        ctx.beginPath(); ctx.fillStyle='rgba(0,0,0,0.28)';
+        ctx.ellipse(d.x,d.y,4*d.s,2.4*d.s,0,0,Math.PI*2); ctx.fill();
+      } else {
+        ctx.strokeStyle='rgba(110,160,90,0.55)'; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x-3*d.s,d.y-9*d.s); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x+3*d.s,d.y-8*d.s); ctx.stroke();
+      }
+    });
 
-    ctx.strokeStyle = '#6b4a30'; ctx.lineWidth=5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(38,GROUND_Y); ctx.lineTo(ANCHOR.x,ANCHOR.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(82,GROUND_Y); ctx.lineTo(ANCHOR.x,ANCHOR.y); ctx.stroke();
+    // カタパルト（拡大・存在感）
+    const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
+    ctx.lineCap='round';
+    ctx.strokeStyle = '#503a22'; ctx.lineWidth=9;
+    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = '#78552f'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.fillStyle='#3c2a1a'; ctx.ellipse(ax,baseY+2,16,8,0,0,Math.PI*2); ctx.fill();
 
     if(dragging && current && dragPoint){
       ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
-      ctx.beginPath(); ctx.moveTo(38,GROUND_Y-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(82,GROUND_Y-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax-30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax+30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
       ctx.setLineDash([]);
       const dx=ANCHOR.x-dragPoint.x, dy=ANCHOR.y-dragPoint.y;
       if(trajectoryHint){
@@ -873,24 +928,24 @@
         ctx.save();
         ctx.translate(e.position.x, e.position.y);
         if(frozen){ ctx.filter = 'hue-rotate(160deg) saturate(1.3)'; }
-        ctx.drawImage(loadedImages.enemy, -12, -12, 24, 24);
+        ctx.drawImage(loadedImages.enemy, -16, -16, 32, 32);
         ctx.restore();
       } else {
         ctx.beginPath();
         ctx.fillStyle = frozen ? '#7fb8e0' : (e.hp<e.maxHp ? '#e07a5a' : '#c9453a');
-        ctx.arc(e.position.x,e.position.y,9,0,Math.PI*2); ctx.fill();
-        ctx.strokeStyle='#000a'; ctx.lineWidth=1; ctx.stroke();
-        ctx.font='11px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.arc(e.position.x,e.position.y,12,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#000a'; ctx.lineWidth=2; ctx.stroke();
+        ctx.font='15px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillStyle='#fff';
         ctx.fillText(frozen?'🥶':'👹', e.position.x, e.position.y+1);
       }
       if(e.hitFlash>0){
         ctx.beginPath(); ctx.strokeStyle=`rgba(255,255,255,${e.hitFlash})`; ctx.lineWidth=2;
-        ctx.arc(e.position.x,e.position.y,13,0,Math.PI*2); ctx.stroke();
+        ctx.arc(e.position.x,e.position.y,17,0,Math.PI*2); ctx.stroke();
       }
       if(e.maxHp>1){
-        ctx.font='8px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
-        ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, e.position.y+16);
+        ctx.font='9px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
+        ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, e.position.y+21);
       }
     });
 
