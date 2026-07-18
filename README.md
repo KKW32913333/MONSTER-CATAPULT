@@ -4,6 +4,8 @@
 ワールドマップ形式のステージ選択、モンスター育成ショップ、デイリーミッション、オンラインランキングを備えた、
 より製品に近い構成になっています。
 
+**デザイン**：太いアウトライン＋フラットな塗り＋オフセット影の「ステッカー調」スタイル（Clash Royale/Brawl Starsなどに近い、明るく親しみやすいモバイルゲームらしい配色）。フォントは丸ゴシックの「M PLUS Rounded 1c」（Google Fonts、CDN経由で読み込み）。
+
 ---
 
 ## 🎮 ゲームの遊び方
@@ -69,11 +71,22 @@ sw.js
 icons/（フォルダごと。icon-58.png 〜 icon-1024.png を含む）
 ```
 
-### ③ GitHub Pagesを有効化
+### ③ GitHub Pagesを有効化（自動デプロイ）
 
+**方法A：シンプル（追加設定不要、これだけで自動デプロイになります）**
 1. リポジトリの「Settings」タブ → 左メニュー「Pages」
 2. Source を **「Deploy from a branch」→「main」→「/(root)」** に設定 →「Save」
 3. 数分後、`https://<ユーザー名>.github.io/<リポジトリ名>/` でアクセス可能
+4. これ以降、**mainブランチにpushするたびに自動的にサイトが更新されます**（追加操作は不要）
+
+**方法B：GitHub Actionsで明示的に自動化する場合**
+本フォルダには `.github/workflows/deploy.yml` を同梱しています。これをアップロードすると、push のたびに GitHub Actions がビルド〜デプロイを自動実行し、Service Worker のキャッシュ名も毎回自動更新されるため「更新が反映されない」問題が起きにくくなります。
+1. `.github` フォルダごとリポジトリにアップロード（`.github/workflows/deploy.yml` という構造を保ったまま）
+2. リポジトリの「Settings」タブ → 左メニュー「Pages」
+3. Source を **「GitHub Actions」** に変更
+4. 以降、push すると「Actions」タブでデプロイの進行状況が確認できます
+
+方法Aと方法Bはどちらか一方を選べば十分です（併用不可）。
 
 ### ④ Firebaseランキング設定（任意）
 
@@ -85,6 +98,7 @@ icons/（フォルダごと。icon-58.png 〜 icon-1024.png を含む）
 
 ```
 monster-catapult-v2/
+├── .github/workflows/deploy.yml  # GitHub Actions自動デプロイ設定（任意）
 ├── index.html       # 画面構造（マップ/モンスター/ショップ/ミッション/ランキング/ゲーム）
 ├── mc-game.js        # ゲームロジック本体（物理演算・ステージ生成・育成・ミッション）
 ├── mc-firebase.js    # オンラインランキング連携（任意設定）

@@ -153,7 +153,7 @@
   // ---------- DOM ----------
   const el = id => document.getElementById(id);
   const screens = {
-    map: el('screen-map'), monsters: el('screen-monsters'), shop: el('screen-shop'),
+    splash: el('screen-splash'), map: el('screen-map'), monsters: el('screen-monsters'), shop: el('screen-shop'),
     missions: el('screen-missions'), ranking: el('screen-ranking'), game: el('screen-game'),
   };
   const topbar = el('topbar'), bottomNav = el('bottomNav');
@@ -166,20 +166,28 @@
 
   function showScreen(name){
     Object.keys(screens).forEach(k=> screens[k].classList.toggle('hidden', k!==name));
-    const isGame = name==='game';
-    topbar.classList.toggle('hidden', isGame);
-    bottomNav.classList.toggle('hidden', isGame);
+    const chromeless = (name==='game' || name==='splash');
+    topbar.classList.toggle('hidden', chromeless);
+    bottomNav.classList.toggle('hidden', chromeless);
     document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.nav===name));
     if(name==='map') renderMap();
     if(name==='monsters') renderMonsters();
     if(name==='shop') renderShop();
     if(name==='missions') renderMissions();
     if(name==='ranking'){ el('myTotalScore').textContent = state.totalScore; loadRanking(); }
+    if(name==='splash'){ el('splashHighScore').textContent = state.totalScore; el('splashGold').textContent = state.gold; }
     refreshTopbar();
   }
   document.querySelectorAll('.nav-item').forEach(item=>{
     item.addEventListener('click', ()=> showScreen(item.dataset.nav));
   });
+  el('splashPlayBtn').addEventListener('click', ()=> showScreen('map'));
+  (function setSplashIcon(){
+    const img = new Image();
+    img.onload = ()=>{ el('splashIcon').style.backgroundImage = `url('icons/icon-192.png')`; el('splashIcon').textContent=''; };
+    img.onerror = ()=>{ /* 画像未取得ならデフォルト絵文字のまま */ };
+    img.src = 'icons/icon-192.png';
+  })();
 
   // ---------- ワールドマップ ----------
   function unlockedUpTo(){
@@ -913,7 +921,7 @@
   el('overlayPrimaryBtn'); // no-op ref warm-up
   refreshTopbar();
   refreshMissionDot();
-  showScreen('map');
+  showScreen('splash');
   if(typeof Matter === 'undefined'){
     alert('物理エンジン(Matter.js)の読み込みに失敗しました。通信環境を確認してください。');
   } else {

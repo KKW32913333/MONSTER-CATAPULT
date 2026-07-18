@@ -3,13 +3,14 @@
    ・HTML/JSはネットワーク優先（更新をすぐ反映）
    ・アイコン等の静的アセットはキャッシュ優先（オフライン対応）
    ========================================================== */
-const CACHE_NAME = 'monster-catapult-v2';
+const CACHE_NAME = 'monster-catapult-v4';
 const APP_SHELL = [
   './',
   './index.html',
   './mc-game.js',
   './mc-firebase.js',
   './manifest.json',
+  './apple-touch-icon.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];
