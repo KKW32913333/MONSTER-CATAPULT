@@ -391,6 +391,21 @@
   let toRemove = [], particles = [], explosions = [];
   let gameClock = 0;
   let killsThisTurn = 0;
+  let shakeAmount = 0;
+  let trailPoints = [];
+  let debris = [];
+  function triggerShake(amount){ shakeAmount = Math.max(shakeAmount, amount); }
+  function spawnDebris(x,y,color,count){
+    for(let i=0;i<count;i++){
+      const ang = Math.random()*Math.PI*2;
+      const spd = 1.5+Math.random()*3.5;
+      debris.push({
+        x,y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd-1.5,
+        t:0, life:500+Math.random()*300, color, size:2+Math.random()*3,
+        rot: Math.random()*Math.PI*2, vrot:(Math.random()-0.5)*0.3,
+      });
+    }
+  }
 
   function isBossStage(n){ return n % 5 === 0; }
   function bossHpForStage(n){ return n >= 10 ? 7 : 4; }
@@ -412,48 +427,88 @@
     const arr=[]; for(let i=0;i<count;i++) arr.push(FORT_RIGHT_EDGE - i*(BLOCK_W+BLOCK_GAP)); return arr;
   }
 
+  let castleDecor = null; // 旗の描画用に、塔の最上段ブロックを保持
+
   function buildFortress(sp, stageN){
-    const rowsData = [];
+    castleDecor = { flags: [] };
     const baseY = GROUND_Y - BLOCK_H/2 - 2;
-    for(let r=0;r<sp.rows;r++){
-      const count = sp.baseCount - r;
-      if(count<1) break;
+    const wallCount = sp.baseCount;             // 城壁の横幅（ブロック数）
+    const wallRows = 2;                          // 城壁の厚み（段数）
+    const towerRows = Math.min(sp.rows, 4);       // 塔が城壁の上にさらに積む段数（画面上部にはみ出さないよう上限あり）
+    const xs = rowBlocksX(wallCount);
+    const leftX = Math.min.apply(null, xs);
+    const rightX = Math.max.apply(null, xs);
+
+    // ① 城壁（横方向に2段）
+    for(let r=0; r<wallRows; r++){
       const y = baseY - r*(BLOCK_H+BLOCK_GAP);
-      const xs = rowBlocksX(count);
-      const h = (r===sp.rows-1) ? BLOCK_H-4 : BLOCK_H;
-      xs.forEach(x=> addBlock(x,y,BLOCK_W,h));
-      rowsData.push({r,y,xs,count});
+      xs.forEach(x=> addBlock(x,y,BLOCK_W,BLOCK_H));
     }
-    const top = rowsData[rowsData.length-1];
-    const apexX = (top.xs[0]+top.xs[top.xs.length-1])/2;
+    const wallTopY = baseY - (wallRows-1)*(BLOCK_H+BLOCK_GAP);
+
+    // ② 城壁の上の胸壁（凹凸）。1つおきに小さいブロックを乗せる（隙間には敵を立たせる）
+    for(let i=0;i<xs.length;i+=2){
+      addBlock(xs[i], wallTopY-(BLOCK_H+BLOCK_GAP)/2-7, 16, 14, true);
+    }
+
+    // ③ 両端の塔（城壁より高く積み上げる）
+    function buildTower(x, extraRows){
+      let topBlock = null;
+      for(let r=wallRows; r<wallRows+extraRows; r++){
+        const y = baseY - r*(BLOCK_H+BLOCK_GAP);
+        topBlock = addBlock(x,y,BLOCK_W,BLOCK_H);
+      }
+      const topY = baseY - (wallRows+extraRows-1)*(BLOCK_H+BLOCK_GAP);
+      return {topBlock, topY};
+    }
+    const leftTower = buildTower(leftX, towerRows);
+    const rightTower = buildTower(rightX, towerRows);
+    castleDecor.flags.push(leftTower.topBlock, rightTower.topBlock);
+    castleDecor.gate = {x:(leftX+rightX)/2, y:baseY+BLOCK_H/2+2};
+
+    // ④ ボスステージ：中央にひときわ高い主塔（キープ）
+    let keep = null, keepX = null;
     if(sp.isBoss){
-      addBoss(apexX, top.y-BLOCK_H/2-20, bossHpForStage(stageN));
+      keepX = (leftX+rightX)/2;
+      keep = buildTower(keepX, Math.min(towerRows+1, 5));
+      castleDecor.flags.push(keep.topBlock);
+    }
+
+    // ---------- 敵配置（すべて構造物の"上"、隣接ブロックと重ならない位置） ----------
+    if(sp.isBoss){
+      addBoss(keepX, keep.topY-BLOCK_H/2-26, bossHpForStage(stageN));
+      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
+      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
     } else {
-      addEnemy(apexX, top.y-BLOCK_H/2-13, sp.enemyHp);
+      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
+      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
+    }
+    // 城壁の上（胸壁の隙間＝奇数インデックス）に立つ雑魚。
+    // 両端の塔・中央キープの柱が通る位置（leftX/rightX/keepX付近）は必ず除外する。
+    const excludeXs = [leftX, rightX];
+    if(sp.isBoss) excludeXs.push(keepX);
+    const wallEnemyCount = Math.max(1, Math.min(4, sp.rows-1));
+    const oddSlots = [];
+    for(let i=1;i<xs.length;i+=2){
+      const tooClose = excludeXs.some(ex=> Math.abs(xs[i]-ex) < BLOCK_W);
+      if(!tooClose) oddSlots.push(xs[i]);
+    }
+    for(let i=0;i<wallEnemyCount && i<oddSlots.length;i++){
+      const idx = Math.floor(i*(oddSlots.length/wallEnemyCount));
+      addEnemy(oddSlots[idx], wallTopY-BLOCK_H/2-15, sp.enemyHp);
     }
 
-    const bottom = rowsData[0];
-    addEnemy(Math.min.apply(null,bottom.xs)-BLOCK_W/2-16, GROUND_Y-11, sp.enemyHp);
-    addEnemy(Math.max.apply(null,bottom.xs)+BLOCK_W/2+16, GROUND_Y-11, sp.enemyHp);
-
-    const midEnd = sp.isBoss ? sp.rows-3 : sp.rows-2;
-    for(let r=1;r<=midEnd;r++){
-      const row = rowsData[r];
-      const cx = row.xs.reduce((a,b)=>a+b,0)/row.xs.length;
-      addEnemy(cx, row.y-6, sp.enemyHp);
-    }
-
-    // 爆発樽の配置（ステージ3以降。砦の脇に設置し、当てると誘爆して周囲を巻き込む）
-    const leftEdgeX = Math.min.apply(null, bottom.xs) - BLOCK_W/2;
+    // 爆発樽の配置（ステージ3以降。城壁の脇の地面に設置）
     for(let i=0;i<sp.barrelCount;i++){
-      addBarrel(leftEdgeX - 26 - i*30, GROUND_Y-16);
+      addBarrel(leftX - BLOCK_W/2 - 30 - i*34, GROUND_Y-16);
     }
   }
 
-  function addBlock(x,y,w,h){
-    const b = Bodies.rectangle(x,y,w,h,{density:0.0015, friction:0.6, restitution:0.05, label:'block'});
-    b.blockW=w; b.blockH=h;
+  function addBlock(x,y,w,h,isCrenel){
+    const b = Bodies.rectangle(x,y,w,h,{density:isCrenel?0.0008:0.0015, friction:0.6, restitution:0.05, label:'block'});
+    b.blockW=w; b.blockH=h; b.isCrenel=!!isCrenel;
     blocks.push(b); World.add(world,b);
+    return b;
   }
   function addEnemy(x,y,hp){
     const e = Bodies.circle(x,y,12,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
@@ -484,8 +539,8 @@
     engine = Engine.create();
     engine.gravity.y = 1;
     world = engine.world;
-    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[];
-    toRemove=[]; particles=[]; explosions=[];
+    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[]; castleDecor=null;
+    toRemove=[]; particles=[]; explosions=[]; debris=[]; trailPoints=[]; shakeAmount=0;
     gameClock=0; killsThisTurn=0; stageScore=0; stageOver=false;
     dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
     buildGroundDecor();
@@ -560,6 +615,8 @@
     } else {
       body.hitFlash = 1.0;
       pushParticle(body.position.x, body.position.y-14, body.isBoss?`HIT ${body.hp}/${body.maxHp}`:'HIT', '#ffb057');
+      spawnDebris(body.position.x, body.position.y, '#ffb057', 4);
+      triggerShake(3);
     }
   }
 
@@ -574,12 +631,15 @@
     if(current) bumpMissionTrack('type:'+current.type, 1);
     if(source==='explosion') bumpMissionTrack('explosionKill', 1);
     pushParticle(body.position.x, body.position.y, (body.isBoss?'BOSS撃破 +':'+')+points, body.isBoss?'#ffd35e':'#f0c04a');
+    spawnDebris(body.position.x, body.position.y, body.isBoss?'#c68aff':'#c9453a', body.isBoss?16:8);
+    triggerShake(body.isBoss?16:6);
     if(body.isBoss){
       explosions.push({x:body.position.x, y:body.position.y, t:0});
     }
     updateHUD();
     if(enemiesArr.length===0 && !stageOver){ endStage(true); }
   }
+
 
   function explodeBarrel(barrel){
     barrel.exploded = true;
@@ -602,6 +662,8 @@
     });
     pushParticle(pos.x, pos.y-10, '誘爆!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
+    spawnDebris(pos.x, pos.y, '#ff8a3d', 14);
+    triggerShake(12);
     // 連鎖：範囲内の他の樽も誘爆させる
     [...barrels].forEach(other=>{
       if(other.exploded) return;
@@ -622,6 +684,7 @@
       World.add(world, frag); fragments.push(frag);
     });
     pushParticle(pos.x, pos.y-14, '分裂!', '#7bd66b');
+    spawnDebris(pos.x, pos.y, '#7bd66b', 6);
   }
 
   function explodeAt(pos){
@@ -640,6 +703,8 @@
     });
     pushParticle(pos.x, pos.y-10, '爆発!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
+    spawnDebris(pos.x, pos.y, '#ff8a3d', 16);
+    triggerShake(14);
   }
 
   function freezeAt(pos){
@@ -773,6 +838,7 @@
     killsThisTurn = 0;
     queueIndex++;
     current = null;
+    trailPoints = [];
     if(queueIndex >= ammoQueue.length){ if(!stageOver) endStage(false); }
     else spawnNext();
     updateHUD(); renderQueue();
@@ -864,9 +930,26 @@
 
     enemiesArr.forEach(e=>{ if(e.hitFlash>0) e.hitFlash = Math.max(0, e.hitFlash - dt/300); });
 
+    shakeAmount = Math.max(0, shakeAmount - dt*0.045);
+
+    for(let i=debris.length-1;i>=0;i--){
+      const d = debris[i];
+      d.t += dt;
+      d.x += d.vx; d.y += d.vy; d.vy += 0.15; d.rot += d.vrot;
+      if(d.t > d.life) debris.splice(i,1);
+    }
+
+    if(current && current.launched){
+      trailPoints.push({x:current.body.position.x, y:current.body.position.y, t:0});
+      if(trailPoints.length>14) trailPoints.shift();
+    }
+    trailPoints.forEach(p=> p.t+=dt);
+    trailPoints = trailPoints.filter(p=> p.t<260);
+
     if(current && current.launched){
       turnTimer -= dt;
-      const offscreen = current.body.position.y>H+100 || current.body.position.x>W+140;
+      const p = current.body.position;
+      const offscreen = p.y>H+100 || p.x>W+140 || p.x<-140 || p.y<-220;
       const stillExists = Composite.get(world, current.body.id, 'body');
       if(turnTimer<=0 || offscreen || !stillExists){
         if(stillExists) World.remove(world, current.body);
@@ -874,6 +957,7 @@
         killsThisTurn = 0;
         queueIndex++;
         current = null;
+        trailPoints = [];
         if(queueIndex >= ammoQueue.length){ if(!stageOver) endStage(false); }
         else spawnNext();
         renderQueue();
@@ -939,6 +1023,11 @@
 
   function render(){
     ctx.clearRect(0,0,W,H);
+    ctx.save();
+    if(shakeAmount>0.3){
+      const sx=(Math.random()-0.5)*shakeAmount, sy=(Math.random()-0.5)*shakeAmount;
+      ctx.translate(sx,sy);
+    }
     const bgImg = loadedImages.backgrounds[stageBackgroundKey(currentStage)];
     if(bgImg){
       ctx.drawImage(bgImg, 0, 0, W, H);
@@ -997,7 +1086,37 @@
       }
     }
 
-    blocks.forEach(b=> drawRectBody(b, '#5a4536'));
+    if(castleDecor && castleDecor.gate){
+      const gx=castleDecor.gate.x, gy=castleDecor.gate.y;
+      ctx.fillStyle = 'rgba(10,6,4,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(gx-15, gy);
+      ctx.lineTo(gx-15, gy-26);
+      ctx.arc(gx, gy-26, 15, Math.PI, 0);
+      ctx.lineTo(gx+15, gy);
+      ctx.closePath(); ctx.fill();
+    }
+
+    blocks.forEach(b=> drawRectBody(b, b.isCrenel ? '#6b5546' : '#5a4536'));
+
+    // 旗（塔の最上段ブロックに追従して描く。ブロックが崩れると一緒に傾く）
+    if(castleDecor && castleDecor.flags){
+      castleDecor.flags.forEach(fb=>{
+        if(!fb || !blocks.includes(fb)) return;
+        ctx.save();
+        ctx.translate(fb.position.x, fb.position.y);
+        ctx.rotate(fb.angle);
+        ctx.strokeStyle = '#3a2a1a'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0,-BLOCK_H/2); ctx.lineTo(0,-BLOCK_H/2-20); ctx.stroke();
+        ctx.fillStyle = '#e2483a';
+        ctx.beginPath();
+        ctx.moveTo(0,-BLOCK_H/2-20);
+        ctx.lineTo(16,-BLOCK_H/2-16);
+        ctx.lineTo(0,-BLOCK_H/2-11);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      });
+    }
 
     barrels.forEach(b=>{
       ctx.save();
@@ -1061,6 +1180,13 @@
 
     if(current){
       const def = MONSTER_DEFS[current.type];
+      trailPoints.forEach((p,i)=>{
+        const a = Math.max(0, 1 - p.t/260) * 0.35;
+        const r = 3 + (i/trailPoints.length)*4;
+        ctx.beginPath(); ctx.fillStyle = def.color; ctx.globalAlpha = a;
+        ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+      });
       const img = loadedImages.monsters[current.type];
       if(img){
         const vr = def.radius * 1.9; // 見た目は当たり判定より大きく表示
@@ -1096,6 +1222,19 @@
       ctx.fillText(p.text, p.x, p.y - p.t/40);
       ctx.globalAlpha = 1;
     });
+
+    debris.forEach(d=>{
+      const a = Math.max(0, 1 - d.t/d.life);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.rot);
+      ctx.fillStyle = d.color;
+      ctx.fillRect(-d.size/2,-d.size/2,d.size,d.size);
+      ctx.restore();
+    });
+
+    ctx.restore(); // シェイク用のtranslateを解除
   }
 
   // ---------- 起動 ----------
