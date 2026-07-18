@@ -676,6 +676,12 @@
 
     const ground = Bodies.rectangle(W/2, GROUND_Y+15, W+40, 30, {isStatic:true, label:'ground', friction:0.9});
     World.add(world, ground);
+    // 見えない壁（左右・天井）：強い衝撃でブロックや敵が画面外へ飛んでいかないよう封じ込める
+    const wallOpts = {isStatic:true, label:'wall', friction:0.4, restitution:0.15};
+    const leftWall  = Bodies.rectangle(-15, H/2, 30, H*2, wallOpts);
+    const rightWall = Bodies.rectangle(W+15, H/2, 30, H*2, wallOpts);
+    const ceiling   = Bodies.rectangle(W/2, -15, W*2, 30, wallOpts);
+    World.add(world, [leftWall, rightWall, ceiling]);
 
     const sp = stageParams(n);
     buildFortress(sp, n);
