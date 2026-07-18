@@ -95,7 +95,7 @@
   // DOM側（モンスターカード等）で画像を使う場合のCSS背景ヘルパー
   function monsterIconStyle(key){
     const path = IMAGE_ASSETS.monsters[key];
-    return path ? `background-image:url('${path}'); background-size:cover; background-position:center;` : '';
+    return path ? `background-image:url('${path}'); background-size:145%; background-position:center;` : '';
   }
 
   const ANCHOR = {x:66, y:300};
@@ -1059,10 +1059,11 @@
       const def = MONSTER_DEFS[current.type];
       const img = loadedImages.monsters[current.type];
       if(img){
+        const vr = def.radius * 1.9; // 見た目は当たり判定より大きく表示
         ctx.save();
         ctx.translate(current.body.position.x, current.body.position.y);
         ctx.rotate(current.body.angle);
-        ctx.drawImage(img, -def.radius, -def.radius, def.radius*2, def.radius*2);
+        ctx.drawImage(img, -vr, -vr, vr*2, vr*2);
         ctx.restore();
       } else {
         ctx.beginPath(); ctx.fillStyle=def.color;
