@@ -54,17 +54,19 @@
   const IMAGE_ASSETS = {
     // ステージ背景：ステージ番号の範囲ごとに切り替わります（stageBackgroundKey関数で対応付け）
     backgrounds: {
-      meadow: 'bg-meadow.jpg',   // ステージ1〜2：緑の草原
-      forest: 'bg-forest.jpg',   // ステージ3〜4：森の小川
-      cave:   'bg-cave.jpg',     // ステージ5〜7：水晶の洞窟
-      snow:   'bg-snow.jpg',     // ステージ8〜10：雪山の村
+      meadow:  'bg-meadow.jpg',   // ステージ1〜2：緑の草原
+      forest:  'bg-forest.jpg',   // ステージ3〜4：森の小川
+      cave:    'bg-cave.jpg',     // ステージ6〜7：水晶の洞窟
+      snow:    'bg-snow.jpg',     // ステージ8〜9：雪山の村
+      volcano: 'bg-volcano.jpg',  // ボスステージ（5・10）専用：溶岩の渓谷
     },
     // 砦ブロックのテクスチャ：背景と同じテーマ区分で切り替わります
     blocks: {
-      meadow: 'block-meadow.jpg',
-      forest: 'block-forest.jpg',
-      cave:   'block-cave.jpg',
-      snow:   'block-snow.jpg',
+      meadow:  'block-meadow.jpg',
+      forest:  'block-forest.jpg',
+      cave:    'block-cave.jpg',
+      snow:    'block-snow.jpg',
+      volcano: 'block-volcano.jpg',
     },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
     monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
@@ -73,6 +75,7 @@
     },
   };
   function stageBackgroundKey(stageN){
+    if(isBossStage(stageN)) return 'volcano';
     if(stageN <= 2) return 'meadow';
     if(stageN <= 4) return 'forest';
     if(stageN <= 7) return 'cave';
@@ -901,6 +904,7 @@
   const groundColors = {
     meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
     cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
+    volcano:{a:'#4a1408', b:'#180402'},
   };
   let groundDecor = null;
   function buildGroundDecor(){
