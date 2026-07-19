@@ -20,7 +20,7 @@
   ];
   const STAGES_PER_WORLD = 10;
   const TOTAL_STAGES = WORLDS.length * STAGES_PER_WORLD;
-  const LEVEL_MAX = 5;
+  const LEVEL_MAX = 50;
   const BASE_THRESHOLD = 2.3;
 
   function worldForStage(n){ return Math.ceil(n / STAGES_PER_WORLD); }
@@ -170,12 +170,13 @@
 
   function levelUpCost(key){
     const lv = state.monsters[key].level || 0;
-    return Math.round(MONSTER_DEFS[key].levelBase * Math.pow(1.55, Math.max(0,lv-1)));
+    // 50レベルまで遊べるよう、緩やかな線形成長に変更（指数関数だと終盤の金額が非現実的になるため）
+    return Math.round(MONSTER_DEFS[key].levelBase * (1 + Math.max(0,lv-1)*0.35));
   }
   function levelMult(key){
     if(!key) return 1;
     const lv = state.monsters[key] ? (state.monsters[key].level||1) : 1;
-    return 1 + (lv-1)*0.15;
+    return 1 + (lv-1)*0.08;
   }
 
   // ---------- ミッション ----------
@@ -330,7 +331,7 @@
     const info = state.monsters[key];
     const owned = info.owned;
     const level = info.level || 0;
-    const powerPct = Math.min(100, ((def.basePower + (level-1)*0.6) / 6) * 100);
+    const powerPct = Math.min(100, ((def.basePower + (level-1)*0.12) / 10) * 100);
     const weightPct = Math.min(100, (def.baseWeight/6)*100);
 
     let actionHtml = '';
@@ -1049,7 +1050,7 @@
   function closeOverlay(){ overlayEl.classList.add('hidden'); }
 
   let paused = false;
-  el('pauseBtn').addEventListener('click', ()=>{
+  function showPauseDialog(){
     if(!inGame || stageOver || paused) return;
     paused = true;
     SFX.click();
@@ -1075,7 +1076,9 @@
       showScreen('map');
     };
     overlayEl.classList.remove('hidden');
-  });
+  }
+  el('pauseBtn').addEventListener('click', showPauseDialog);
+  el('mapReturnBtn').addEventListener('click', showPauseDialog);
 
   const speedBtnEl = el('speedBtn');
   speedBtnEl.addEventListener('click', ()=>{ speedMul = speedMul===1?2:1; speedBtnEl.textContent='x'+speedMul; });
@@ -1304,8 +1307,10 @@
       ctx.fillStyle = `rgba(255,255,255,${b.hitFlash*0.5})`;
       ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     }
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
-    ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    if(!b.chunkType || !loadedImages.castle[b.chunkType]){
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
+      ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    }
     ctx.restore();
   }
 
