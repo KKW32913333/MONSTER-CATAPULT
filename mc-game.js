@@ -86,6 +86,7 @@
       wall:  'castle-wall.png',
       keep:  'castle-keep.png',
     },
+    launcher: 'launcher-cannon-tower.png', // カタパルト（発射台）専用イラスト
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
     monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 480x480, png/透過）
       slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:'monster-icegolem.png',
@@ -108,6 +109,7 @@
     Object.keys(IMAGE_ASSETS.backgrounds).forEach(k=> tryLoad(k, IMAGE_ASSETS.backgrounds[k], loadedImages.backgrounds));
     Object.keys(IMAGE_ASSETS.blocks).forEach(k=> tryLoad(k, IMAGE_ASSETS.blocks[k], loadedImages.blocks));
     Object.keys(IMAGE_ASSETS.castle).forEach(k=> tryLoad(k, IMAGE_ASSETS.castle[k], loadedImages.castle));
+    tryLoad('launcher', IMAGE_ASSETS.launcher, loadedImages);
     tryLoad('enemy', IMAGE_ASSETS.enemy, loadedImages);
     MONSTER_ORDER.forEach(k=> tryLoad(k, IMAGE_ASSETS.monsters[k], loadedImages.monsters));
   }
@@ -130,7 +132,7 @@
   // ---------- 画面の向きに応じた座標プロファイル ----------
   // 横向きの時は戦場そのもの（Canvasの論理座標）を横に広げ、単に表示を拡大するだけでなく
   // カタパルトと城の間の実際の距離・視野が広がるようにする。
-  const LAYOUT_PORTRAIT  = { w:390, h:460, groundOffset:68, anchorX:54,  anchorGap:96 };
+  const LAYOUT_PORTRAIT  = { w:390, h:460, groundOffset:68, anchorX:74,  anchorGap:96 };
   const LAYOUT_LANDSCAPE = { w:640, h:360, groundOffset:65, anchorX:90,  anchorGap:90 };
   function isLandscapeNow(){
     return window.matchMedia && window.matchMedia('(orientation: landscape)').matches && window.innerHeight < 600;
@@ -1385,8 +1387,17 @@
       }
     });
 
-    // カタパルト（装飾的な木製カタパルト：車輪・横木・カップ）
+    // カタパルト（専用イラストがあればそれを優先。発射口の位置をANCHORに正確に合わせる）
     const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
+    const launcherImg = loadedImages.launcher;
+    if(launcherImg){
+      const muzzleFracX = 0.653, muzzleFracY = 0.111;
+      const drawH = (GROUND_Y - ANCHOR.y + 14) / (1 - muzzleFracY);
+      const drawW = drawH * (launcherImg.width / launcherImg.height);
+      const drawX = ax - muzzleFracX*drawW;
+      const drawY = ay - muzzleFracY*drawH;
+      ctx.drawImage(launcherImg, drawX, drawY, drawW, drawH);
+    } else {
     ctx.lineCap='round';
     // 車輪
     [ax-21, ax+21].forEach(wx=>{
@@ -1420,6 +1431,7 @@
     // カップ（モンスターを乗せる受け皿）
     ctx.beginPath(); ctx.fillStyle='#5a3f24'; ctx.arc(ax,ay+4,13,0,Math.PI,false); ctx.fill();
     ctx.strokeStyle='#2a1c10'; ctx.lineWidth=2; ctx.stroke();
+    }
 
     if(dragging && current && dragPoint){
       ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
