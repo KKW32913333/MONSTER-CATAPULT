@@ -3,7 +3,7 @@
    ・HTML/JSはネットワーク優先（更新をすぐ反映）
    ・アイコン等の静的アセットはキャッシュ優先（オフライン対応）
    ========================================================== */
-const CACHE_NAME = 'monster-catapult-v21';
+const CACHE_NAME = 'monster-catapult-v26';
 const APP_SHELL = [
   './',
   './index.html',
@@ -19,6 +19,9 @@ const APP_SHELL = [
   './bg-snow.jpg',
   './bg-volcano.jpg',
   './block-stone.jpg',
+  './castle-tower.png',
+  './castle-wall.png',
+  './castle-keep.png',
   './monster-slime.png',
   './monster-dragon.png',
   './monster-spikeball.png',

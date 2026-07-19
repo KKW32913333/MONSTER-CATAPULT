@@ -117,15 +117,43 @@
     return path ? `background-image:url('${path}'); background-size:145%; background-position:center;` : '';
   }
 
-  const ANCHOR = {x:54, y:296};
-  const GROUND_Y = 392;
+  let ANCHOR = {x:54, y:296};
+  let GROUND_Y = 392;
   const MAX_PULL = 78;
   const LAUNCH_SCALE = 0.17;
   const TURN_DURATION = 3400;
-  const W = 390, H = 460;
+  let W = 390, H = 460;
   const BLOCK_W = 30, BLOCK_H = 30, BLOCK_GAP = 4;
-  const FORT_RIGHT_EDGE = W - 46;
+  let FORT_RIGHT_EDGE = W - 46;
   const CHUNK_W = 44, TOWER_CHUNK_H = 56, CHUNK_GAP = 3, WALL_H = 46;
+
+  // ---------- 画面の向きに応じた座標プロファイル ----------
+  // 横向きの時は戦場そのもの（Canvasの論理座標）を横に広げ、単に表示を拡大するだけでなく
+  // カタパルトと城の間の実際の距離・視野が広がるようにする。
+  const LAYOUT_PORTRAIT  = { w:390, h:460, groundOffset:68, anchorX:54,  anchorGap:96 };
+  const LAYOUT_LANDSCAPE = { w:640, h:360, groundOffset:65, anchorX:90,  anchorGap:90 };
+  function isLandscapeNow(){
+    return window.matchMedia && window.matchMedia('(orientation: landscape)').matches && window.innerHeight < 600;
+  }
+  function applyOrientationProfile(){
+    const p = isLandscapeNow() ? LAYOUT_LANDSCAPE : LAYOUT_PORTRAIT;
+    W = p.w; H = p.h;
+    GROUND_Y = H - p.groundOffset;
+    ANCHOR = { x:p.anchorX, y: GROUND_Y - p.anchorGap };
+    FORT_RIGHT_EDGE = W - 46;
+    updateCanvasSize();
+  }
+  function updateCanvasSize(){
+    const wrap = document.getElementById('canvasWrap');
+    if(wrap) wrap.style.aspectRatio = `${W} / ${H}`;
+    if(typeof canvas !== 'undefined' && canvas){
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.scale(dpr, dpr);
+    }
+  }
 
   // ---------- プレイヤー永続状態 ----------
   function defaultState(){
@@ -222,7 +250,7 @@
     topbar.classList.toggle('hidden', chromeless);
     bottomNav.classList.toggle('hidden', chromeless);
     document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.nav===name));
-    if(name==='map'){ mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
+    if(name==='map'){ applyOrientationProfile(); mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
     if(name==='monsters') renderMonsters();
     if(name==='shop') renderShop();
     if(name==='missions') renderMissions();
@@ -479,15 +507,12 @@
 
   const canvas = el('game');
   const ctx = canvas.getContext('2d');
-  // 高解像度端末（Retina等）対応：内部の描画バッファをdevicePixelRatio倍に拡大し、
-  // 描画座標はそのまま(390x460)使えるようctx.scaleで補正する。
-  // これをしないと、iPhone等の高DPI端末でCanvas全体（背景・砦・モンスター含む）がぼやけて表示される。
-  (function setupHiDPICanvas(){
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    canvas.width = 390 * dpr;
-    canvas.height = 460 * dpr;
-    ctx.scale(dpr, dpr);
-  })();
+  // 高解像度端末（Retina等）対応、および画面の向き（縦/横）に応じた座標系の初期化。
+  // これをしないと、iPhone等の高DPI端末でCanvas全体がぼやけて表示される。
+  applyOrientationProfile();
+  window.addEventListener('resize', ()=>{ if(!inGameSafe()) applyOrientationProfile(); });
+  window.addEventListener('orientationchange', ()=>{ if(!inGameSafe()) applyOrientationProfile(); });
+  function inGameSafe(){ return typeof inGame !== 'undefined' && inGame; }
 
   let engine, world;
   let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [], crystals = [];
@@ -551,7 +576,8 @@
     const baseY = GROUND_Y - TOWER_CHUNK_H/2 - 2;
     const rightX = FORT_RIGHT_EDGE;
     const leftX = rightX - (sp.baseCount-1)*38;
-    const towerChunkCount = Math.min(4, 2 + Math.floor((sp.rows-3)/2));
+    const maxTowerChunks = Math.max(2, Math.floor((GROUND_Y-100)/(TOWER_CHUNK_H+CHUNK_GAP)));
+    const towerChunkCount = Math.min(maxTowerChunks, 2 + Math.floor((sp.rows-3)/2));
     const chunkHp = Math.min(4, 2 + Math.floor(sp.rows/4));
 
     // 塔（複数の大きなパーツを積んで構成。各パーツが個別に耐久力を持つ）
@@ -559,7 +585,9 @@
       let topBlock = null, lastCenterY = 0;
       for(let i=0;i<count;i++){
         const y = baseY - i*(TOWER_CHUNK_H+CHUNK_GAP);
-        topBlock = addBlock(x, y, CHUNK_W, TOWER_CHUNK_H, chunkHp+hpBonus, false, type);
+        const blk = addBlock(x, y, CHUNK_W, TOWER_CHUNK_H, chunkHp+hpBonus, false, type);
+        blk.chunkIndex = i; blk.chunkTotal = count; // 画像を輪切りにして継ぎ目なく見せるための位置情報
+        topBlock = blk;
         lastCenterY = y;
       }
       return { topBlock, topEdgeY: lastCenterY - TOWER_CHUNK_H/2 };
@@ -583,7 +611,7 @@
     let keep = null, keepX = null;
     if(sp.isBoss){
       keepX = wallX;
-      keep = buildTower(keepX, Math.min(towerChunkCount+1, 4), 1, 'keep');
+      keep = buildTower(keepX, Math.min(towerChunkCount+1, maxTowerChunks), 1, 'keep');
       castleDecor.flags.push(keep.topBlock);
     }
 
@@ -605,7 +633,7 @@
     // 爆発樽の配置（ステージ3以降。城壁とカタパルトの間の安全な範囲内にのみ設置）
     const barrelSpacing = 30;
     const barrelZoneRight = leftX - CHUNK_W/2 - 14;
-    const barrelZoneLeft = 112;
+    const barrelZoneLeft = ANCHOR.x + 58;
     const maxBarrelsFit = Math.max(0, Math.floor((barrelZoneRight - barrelZoneLeft) / barrelSpacing) + 1);
     const actualBarrelCount = Math.min(sp.barrelCount, maxBarrelsFit);
     for(let i=0;i<actualBarrelCount;i++){
@@ -613,7 +641,7 @@
     }
 
     // 隠しクリスタル：砦の右側の空き地に常設
-    addCrystal(374, GROUND_Y-11);
+    addCrystal(W-16, GROUND_Y-11);
   }
 
   function addBlock(x,y,w,h,hp,isCrenel,chunkType){
@@ -1227,8 +1255,16 @@
     ctx.rotate(b.angle);
     const castleImg = b.chunkType ? loadedImages.castle[b.chunkType] : null;
     if(castleImg){
-      // 城パーツ専用イラストがあればそれを優先（透過部分はそのまま活かす）
-      ctx.drawImage(castleImg, -b.blockW/2-1,-b.blockH/2-1,b.blockW+2,b.blockH+2);
+      if(b.chunkTotal && b.chunkTotal>1){
+        // 複数パーツで構成される塔：画像を段数分に輪切りにして貼り、1本の塔に見えるよう合成する
+        // index0（一番下）が画像の下部（土台）、index最大（一番上）が画像の上部（尖塔）に対応
+        const sliceH = castleImg.height / b.chunkTotal;
+        const sy = castleImg.height - (b.chunkIndex+1)*sliceH;
+        ctx.drawImage(castleImg, 0, sy, castleImg.width, sliceH, -b.blockW/2-1,-b.blockH/2-1.5,b.blockW+2,b.blockH+3);
+      } else {
+        // 城パーツ専用イラストがあればそれを優先（透過部分はそのまま活かす）
+        ctx.drawImage(castleImg, -b.blockW/2-1,-b.blockH/2-1,b.blockW+2,b.blockH+2);
+      }
     } else {
       const themeKey = stageBackgroundKey(currentStage);
       const blockImg = loadedImages.blocks[themeKey];
@@ -1295,7 +1331,7 @@
     g.addColorStop(0,'#3a4678'); g.addColorStop(1,'#a8909a');
     ctx.fillStyle = g; ctx.fillRect(0,0,W,GROUND_Y);
     // 太陽のグロー
-    const sx=300, sy=70;
+    const sx=W*0.77, sy=70;
     [ [140,0.04],[100,0.06],[60,0.10],[30,0.16] ].forEach(([r,a])=>{
       ctx.beginPath(); ctx.fillStyle = `rgba(255,220,160,${a})`;
       ctx.arc(sx,sy,r,0,Math.PI*2); ctx.fill();
