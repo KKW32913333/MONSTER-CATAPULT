@@ -46,19 +46,12 @@ html,body{
   isolation:isolate;
 }
 
-/* ---------- 横画面固定（スマホで縦持ちの場合、画面ごと90度回転させて横向き表示にする） ----------
-   iOS Safariは画面回転を固定するネイティブAPIに対応していないため、CSSで疑似的に固定する。
-   スマホ幅（926px以下）で縦持ちの場合のみ発動し、タブレット・PCでは通常表示のまま。 */
-@media screen and (orientation:portrait) and (max-width:926px){
-  html{ overflow:hidden; }
-  body{
-    position:fixed; top:0; left:0;
-    width:100vh; height:100vw;
-    transform-origin:top left;
-    transform:rotate(90deg) translateY(-100%);
-    overflow:hidden;
-  }
-  #app{ max-width:600px; width:100%; margin:0 auto; }
+/* ---------- 横向き時のレイアウト調整 ----------
+   画面を無理やり回転させる方式は、fixed要素が枠外にはみ出すなど実機で不具合が
+   起きやすいため廃止。実際に横向きになった時（ユーザーが端末を回転した時）に
+   きれいに広く使えるよう、幅の上限だけ緩和する安全な方式に変更。 */
+@media screen and (orientation:landscape) and (max-height:500px){
+  #app{ max-width:640px; width:100%; margin:0 auto; }
 }
 /* オーロラ風の背景ブロブ（すべての画面の裏に固定） */
 #app::before{

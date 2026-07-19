@@ -1274,9 +1274,9 @@
   }
 
   const groundColors = {
-    meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
-    cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
-    volcano:{a:'#4a1408', b:'#180402'},
+    meadow:{a:'rgba(58,48,24,0.32)', b:'rgba(24,20,5,0.62)'}, forest:{a:'rgba(28,48,24,0.32)', b:'rgba(10,18,6,0.62)'},
+    cave:{a:'rgba(20,26,44,0.45)', b:'rgba(5,8,16,0.75)'},   snow:{a:'rgba(200,220,240,0.28)', b:'rgba(122,148,184,0.55)'},
+    volcano:{a:'rgba(74,20,8,0.4)', b:'rgba(24,4,2,0.7)'},
   };
   let groundDecor = null;
   function buildGroundDecor(){
