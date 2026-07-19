@@ -52,6 +52,22 @@
   };
   const MONSTER_ORDER = ['slime','dragon','icegolem','spikeball','skeleton','centaur'];
 
+  // ---------- カタパルト強化（アカウント永続・全モンスター共通で効く） ----------
+  const UPGRADE_DEFS = {
+    power: {name:'引っ張り強化', icon:'💪', desc:'発射パワーが上昇し、より低い衝撃速度で敵を撃破しやすくなる', maxLv:8, baseCost:200, costMul:1.5},
+    range: {name:'射程延長',     icon:'📏', desc:'引っ張れる最大距離が伸び、より強い一撃を放てるようになる',   maxLv:8, baseCost:220, costMul:1.5},
+    ammo:  {name:'補給強化',     icon:'📦', desc:'全ステージで使えるモンスターの弾数が+1される',               maxLv:5, baseCost:400, costMul:1.8},
+  };
+  function upgradeCost(key){
+    const def = UPGRADE_DEFS[key];
+    const lv = state.upgrades[key] || 0;
+    return Math.round(def.baseCost * Math.pow(def.costMul, lv));
+  }
+  function effectiveLaunchScale(){ return LAUNCH_SCALE * (1 + (state.upgrades.power||0)*0.07); }
+  function effectiveMaxPull(){ return MAX_PULL + (state.upgrades.range||0)*7; }
+  function effectiveAmmoBonus(){ return state.upgrades.ammo||0; }
+
+
   const MISSION_POOL = [
     {id:'kill_total_5', text:'モンスターを合計5体撃破する',            target:5,   track:'anyKill',      reward:100},
     {id:'kill_fire_3',  text:'ファイアドラゴンで敵を3体撃破する',      target:3,   track:'type:dragon',   reward:120},
@@ -160,9 +176,10 @@
     MONSTER_ORDER.forEach(k=>{
       monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault ? 1 : 0 };
     });
-    return { gold: 300, monsters, stages: {}, totalScore: 0, sfxOn: true };
+    return { gold: 300, monsters, stages: {}, totalScore: 0, sfxOn: true, upgrades: {power:0, range:0, ammo:0} };
   }
   let state = Object.assign(defaultState(), Storage.get('mc_state', {}));
+  if(!state.upgrades) state.upgrades = {power:0, range:0, ammo:0};
   // 深いマージ漏れ対策（旧セーブに新モンスターが無い場合を補完）
   MONSTER_ORDER.forEach(k=>{ if(!state.monsters[k]) state.monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault?1:0 }; });
   function saveState(){ Storage.set('mc_state', state); }
@@ -252,7 +269,7 @@
     document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.nav===name));
     if(name==='map'){ applyOrientationProfile(); mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
     if(name==='monsters') renderMonsters();
-    if(name==='shop') renderShop();
+    if(name==='shop') switchShopTab(shopTab);
     if(name==='missions') renderMissions();
     if(name==='ranking'){ el('myTotalScore').textContent = state.totalScore; loadRanking(); }
     if(name==='splash'){ el('splashHighScore').textContent = state.totalScore; el('splashGold').textContent = state.gold; }
@@ -389,6 +406,50 @@
       });
     });
   }
+
+  function renderUpgrades(){
+    const wrap = el('upgradeList');
+    wrap.innerHTML = Object.keys(UPGRADE_DEFS).map(key=>{
+      const def = UPGRADE_DEFS[key];
+      const lv = state.upgrades[key] || 0;
+      const maxed = lv >= def.maxLv;
+      const cost = upgradeCost(key);
+      const btn = maxed
+        ? `<span class="count">MAX</span>`
+        : `<button class="btn" data-upgrade="${key}" ${state.gold<cost?'disabled':''}>強化する<br><span style="font-size:10px;">${cost}G</span></button>`;
+      return `<div class="upgrade-card">
+        <div class="upgrade-icon">${def.icon}</div>
+        <div class="upgrade-body">
+          <div class="upgrade-head"><span class="upgrade-name">${def.name}</span><span class="upgrade-lv">Lv.${lv}/${def.maxLv}</span></div>
+          <div class="upgrade-desc">${def.desc}</div>
+        </div>
+        ${btn}
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('[data-upgrade]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const key = btn.dataset.upgrade;
+        const cost = upgradeCost(key);
+        if(state.gold < cost || state.upgrades[key] >= UPGRADE_DEFS[key].maxLv) return;
+        state.gold -= cost;
+        state.upgrades[key] = (state.upgrades[key]||0) + 1;
+        saveState(); renderUpgrades(); refreshTopbar();
+        SFX.buy();
+      });
+    });
+  }
+
+  let shopTab = 'monster';
+  function switchShopTab(tab){
+    shopTab = tab;
+    el('shopTabMonster').classList.toggle('active', tab==='monster');
+    el('shopTabUpgrade').classList.toggle('active', tab==='upgrade');
+    el('shopList').classList.toggle('hidden', tab!=='monster');
+    el('upgradeList').classList.toggle('hidden', tab!=='upgrade');
+    if(tab==='monster') renderShop(); else renderUpgrades();
+  }
+  el('shopTabMonster').addEventListener('click', ()=>{ SFX.click(); switchShopTab('monster'); });
+  el('shopTabUpgrade').addEventListener('click', ()=>{ SFX.click(); switchShopTab('upgrade'); });
 
   // ---------- ミッション画面 ----------
   function renderMissions(){
@@ -578,7 +639,7 @@
       rows: 2+capped + (boss?1:0),
       baseCount: Math.min(3+capped + (boss?1:0), 5), // 城壁がカタパルト側までせり出さないよう上限
       enemyHp: (localN>=7 ? 2 : 1) + worldBonus,
-      ammoLen: Math.max(4, 5+Math.min(localN,5)) + (boss?3:0) + worldBonus,
+      ammoLen: Math.max(4, 5+Math.min(localN,5)) + (boss?3:0) + worldBonus + effectiveAmmoBonus(),
       threshBonus: Math.min(localN,10)*0.035 + worldBonus*0.05,
       isBoss: boss,
       barrelCount: (localN<3 ? 0 : (boss ? 2 : 1)) + Math.min(worldBonus,1),
@@ -1110,7 +1171,7 @@
 
   function computeTrajectoryPreview(dx, dy){
     const pts = [];
-    let vx = dx*LAUNCH_SCALE, vy = dy*LAUNCH_SCALE;
+    let vx = dx*effectiveLaunchScale(), vy = dy*effectiveLaunchScale();
     let x = ANCHOR.x, y = ANCHOR.y;
     const gravStep = engine ? engine.gravity.y * engine.gravity.scale : 0.001;
     for(let i=0;i<70;i++){
@@ -1153,7 +1214,8 @@
     const p = canvasPointFromEvent(e);
     let dx=p.x-ANCHOR.x, dy=p.y-ANCHOR.y;
     const dist = Math.hypot(dx,dy);
-    if(dist>MAX_PULL){ dx=dx/dist*MAX_PULL; dy=dy/dist*MAX_PULL; }
+    const maxPull = effectiveMaxPull();
+    if(dist>maxPull){ dx=dx/dist*maxPull; dy=dy/dist*maxPull; }
     dragPoint = {x:ANCHOR.x+dx, y:ANCHOR.y+dy};
     Body.setPosition(current.body, dragPoint);
     e.preventDefault();
@@ -1165,7 +1227,7 @@
     const dist = Math.hypot(dx,dy);
     if(dist>14){
       Body.setStatic(current.body, false);
-      Body.setVelocity(current.body, {x:dx*LAUNCH_SCALE, y:dy*LAUNCH_SCALE});
+      Body.setVelocity(current.body, {x:dx*effectiveLaunchScale(), y:dy*effectiveLaunchScale()});
       current.launched = true; turnTimer = TURN_DURATION;
       SFX.launch();
     } else {
