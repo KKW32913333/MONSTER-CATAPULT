@@ -46,19 +46,12 @@ html,body{
   isolation:isolate;
 }
 
-/* ---------- 横画面固定（スマホで縦持ちの場合、画面ごと90度回転させて横向き表示にする） ----------
-   iOS Safariは画面回転を固定するネイティブAPIに対応していないため、CSSで疑似的に固定する。
-   スマホ幅（926px以下）で縦持ちの場合のみ発動し、タブレット・PCでは通常表示のまま。 */
-@media screen and (orientation:portrait) and (max-width:926px){
-  html{ overflow:hidden; }
-  body{
-    position:fixed; top:0; left:0;
-    width:100vh; height:100vw;
-    transform-origin:top left;
-    transform:rotate(90deg) translateY(-100%);
-    overflow:hidden;
-  }
-  #app{ max-width:600px; width:100%; margin:0 auto; }
+/* ---------- 横向き時のレイアウト調整 ----------
+   画面を無理やり回転させる方式は、fixed要素が枠外にはみ出すなど実機で不具合が
+   起きやすいため廃止。実際に横向きになった時（ユーザーが端末を回転した時）に
+   きれいに広く使えるよう、幅の上限だけ緩和する安全な方式に変更。 */
+@media screen and (orientation:landscape) and (max-height:500px){
+  #app{ max-width:640px; width:100%; margin:0 auto; }
 }
 /* オーロラ風の背景ブロブ（すべての画面の裏に固定） */
 #app::before{
@@ -435,6 +428,7 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
     <div class="game-hud">
       <div class="hud-left">
         <div class="pause-btn" id="pauseBtn">⏸</div>
+        <div class="pause-btn" id="mapReturnBtn" title="マップへ戻る">🗺️</div>
         <div class="hud-pill stage-pill">STAGE <span id="stageLabel">1</span><span class="stars" id="stageStarsHud">☆☆☆</span></div>
       </div>
       <div class="hud-center"><div class="hud-pill"><span class="label">ENEMIES</span><span class="value" id="enemyVal">0/0</span></div></div>
@@ -550,7 +544,7 @@ service cloud.firestore{
   ];
   const STAGES_PER_WORLD = 10;
   const TOTAL_STAGES = WORLDS.length * STAGES_PER_WORLD;
-  const LEVEL_MAX = 5;
+  const LEVEL_MAX = 50;
   const BASE_THRESHOLD = 2.3;
 
   function worldForStage(n){ return Math.ceil(n / STAGES_PER_WORLD); }
@@ -617,9 +611,9 @@ service cloud.firestore{
       keep:  'castle-keep.png',
     },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
-    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
-      slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:null,
-      spikeball:'monster-spikeball.png', skeleton:null, centaur:null,
+    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 480x480, png/透過）
+      slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:'monster-icegolem.png',
+      spikeball:'monster-spikeball.png', skeleton:'monster-skeleton.png', centaur:'monster-centaur.png',
     },
   };
   function stageBackgroundKey(stageN){
@@ -647,15 +641,43 @@ service cloud.firestore{
     return path ? `background-image:url('${path}'); background-size:145%; background-position:center;` : '';
   }
 
-  const ANCHOR = {x:54, y:296};
-  const GROUND_Y = 392;
+  let ANCHOR = {x:54, y:296};
+  let GROUND_Y = 392;
   const MAX_PULL = 78;
   const LAUNCH_SCALE = 0.17;
   const TURN_DURATION = 3400;
-  const W = 390, H = 460;
+  let W = 390, H = 460;
   const BLOCK_W = 30, BLOCK_H = 30, BLOCK_GAP = 4;
-  const FORT_RIGHT_EDGE = W - 46;
+  let FORT_RIGHT_EDGE = W - 46;
   const CHUNK_W = 44, TOWER_CHUNK_H = 56, CHUNK_GAP = 3, WALL_H = 46;
+
+  // ---------- 画面の向きに応じた座標プロファイル ----------
+  // 横向きの時は戦場そのもの（Canvasの論理座標）を横に広げ、単に表示を拡大するだけでなく
+  // カタパルトと城の間の実際の距離・視野が広がるようにする。
+  const LAYOUT_PORTRAIT  = { w:390, h:460, groundOffset:68, anchorX:54,  anchorGap:96 };
+  const LAYOUT_LANDSCAPE = { w:640, h:360, groundOffset:65, anchorX:90,  anchorGap:90 };
+  function isLandscapeNow(){
+    return window.matchMedia && window.matchMedia('(orientation: landscape)').matches && window.innerHeight < 600;
+  }
+  function applyOrientationProfile(){
+    const p = isLandscapeNow() ? LAYOUT_LANDSCAPE : LAYOUT_PORTRAIT;
+    W = p.w; H = p.h;
+    GROUND_Y = H - p.groundOffset;
+    ANCHOR = { x:p.anchorX, y: GROUND_Y - p.anchorGap };
+    FORT_RIGHT_EDGE = W - 46;
+    updateCanvasSize();
+  }
+  function updateCanvasSize(){
+    const wrap = document.getElementById('canvasWrap');
+    if(wrap) wrap.style.aspectRatio = `${W} / ${H}`;
+    if(typeof canvas !== 'undefined' && canvas){
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.scale(dpr, dpr);
+    }
+  }
 
   // ---------- プレイヤー永続状態 ----------
   function defaultState(){
@@ -672,12 +694,13 @@ service cloud.firestore{
 
   function levelUpCost(key){
     const lv = state.monsters[key].level || 0;
-    return Math.round(MONSTER_DEFS[key].levelBase * Math.pow(1.55, Math.max(0,lv-1)));
+    // 50レベルまで遊べるよう、緩やかな線形成長に変更（指数関数だと終盤の金額が非現実的になるため）
+    return Math.round(MONSTER_DEFS[key].levelBase * (1 + Math.max(0,lv-1)*0.35));
   }
   function levelMult(key){
     if(!key) return 1;
     const lv = state.monsters[key] ? (state.monsters[key].level||1) : 1;
-    return 1 + (lv-1)*0.15;
+    return 1 + (lv-1)*0.08;
   }
 
   // ---------- ミッション ----------
@@ -752,7 +775,7 @@ service cloud.firestore{
     topbar.classList.toggle('hidden', chromeless);
     bottomNav.classList.toggle('hidden', chromeless);
     document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.nav===name));
-    if(name==='map'){ mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
+    if(name==='map'){ applyOrientationProfile(); mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
     if(name==='monsters') renderMonsters();
     if(name==='shop') renderShop();
     if(name==='missions') renderMissions();
@@ -832,7 +855,7 @@ service cloud.firestore{
     const info = state.monsters[key];
     const owned = info.owned;
     const level = info.level || 0;
-    const powerPct = Math.min(100, ((def.basePower + (level-1)*0.6) / 6) * 100);
+    const powerPct = Math.min(100, ((def.basePower + (level-1)*0.12) / 10) * 100);
     const weightPct = Math.min(100, (def.baseWeight/6)*100);
 
     let actionHtml = '';
@@ -1009,15 +1032,12 @@ service cloud.firestore{
 
   const canvas = el('game');
   const ctx = canvas.getContext('2d');
-  // 高解像度端末（Retina等）対応：内部の描画バッファをdevicePixelRatio倍に拡大し、
-  // 描画座標はそのまま(390x460)使えるようctx.scaleで補正する。
-  // これをしないと、iPhone等の高DPI端末でCanvas全体（背景・砦・モンスター含む）がぼやけて表示される。
-  (function setupHiDPICanvas(){
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    canvas.width = 390 * dpr;
-    canvas.height = 460 * dpr;
-    ctx.scale(dpr, dpr);
-  })();
+  // 高解像度端末（Retina等）対応、および画面の向き（縦/横）に応じた座標系の初期化。
+  // これをしないと、iPhone等の高DPI端末でCanvas全体がぼやけて表示される。
+  applyOrientationProfile();
+  window.addEventListener('resize', ()=>{ if(!inGameSafe()) applyOrientationProfile(); });
+  window.addEventListener('orientationchange', ()=>{ if(!inGameSafe()) applyOrientationProfile(); });
+  function inGameSafe(){ return typeof inGame !== 'undefined' && inGame; }
 
   let engine, world;
   let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [], crystals = [];
@@ -1081,7 +1101,8 @@ service cloud.firestore{
     const baseY = GROUND_Y - TOWER_CHUNK_H/2 - 2;
     const rightX = FORT_RIGHT_EDGE;
     const leftX = rightX - (sp.baseCount-1)*38;
-    const towerChunkCount = Math.min(4, 2 + Math.floor((sp.rows-3)/2));
+    const maxTowerChunks = Math.max(2, Math.floor((GROUND_Y-100)/(TOWER_CHUNK_H+CHUNK_GAP)));
+    const towerChunkCount = Math.min(maxTowerChunks, 2 + Math.floor((sp.rows-3)/2));
     const chunkHp = Math.min(4, 2 + Math.floor(sp.rows/4));
 
     // 塔（複数の大きなパーツを積んで構成。各パーツが個別に耐久力を持つ）
@@ -1089,7 +1110,9 @@ service cloud.firestore{
       let topBlock = null, lastCenterY = 0;
       for(let i=0;i<count;i++){
         const y = baseY - i*(TOWER_CHUNK_H+CHUNK_GAP);
-        topBlock = addBlock(x, y, CHUNK_W, TOWER_CHUNK_H, chunkHp+hpBonus, false, type);
+        const blk = addBlock(x, y, CHUNK_W, TOWER_CHUNK_H, chunkHp+hpBonus, false, type);
+        blk.chunkIndex = i; blk.chunkTotal = count; // 画像を輪切りにして継ぎ目なく見せるための位置情報
+        topBlock = blk;
         lastCenterY = y;
       }
       return { topBlock, topEdgeY: lastCenterY - TOWER_CHUNK_H/2 };
@@ -1113,7 +1136,7 @@ service cloud.firestore{
     let keep = null, keepX = null;
     if(sp.isBoss){
       keepX = wallX;
-      keep = buildTower(keepX, Math.min(towerChunkCount+1, 4), 1, 'keep');
+      keep = buildTower(keepX, Math.min(towerChunkCount+1, maxTowerChunks), 1, 'keep');
       castleDecor.flags.push(keep.topBlock);
     }
 
@@ -1135,7 +1158,7 @@ service cloud.firestore{
     // 爆発樽の配置（ステージ3以降。城壁とカタパルトの間の安全な範囲内にのみ設置）
     const barrelSpacing = 30;
     const barrelZoneRight = leftX - CHUNK_W/2 - 14;
-    const barrelZoneLeft = 112;
+    const barrelZoneLeft = ANCHOR.x + 58;
     const maxBarrelsFit = Math.max(0, Math.floor((barrelZoneRight - barrelZoneLeft) / barrelSpacing) + 1);
     const actualBarrelCount = Math.min(sp.barrelCount, maxBarrelsFit);
     for(let i=0;i<actualBarrelCount;i++){
@@ -1143,7 +1166,7 @@ service cloud.firestore{
     }
 
     // 隠しクリスタル：砦の右側の空き地に常設
-    addCrystal(374, GROUND_Y-11);
+    addCrystal(W-16, GROUND_Y-11);
   }
 
   function addBlock(x,y,w,h,hp,isCrenel,chunkType){
@@ -1551,7 +1574,7 @@ service cloud.firestore{
   function closeOverlay(){ overlayEl.classList.add('hidden'); }
 
   let paused = false;
-  el('pauseBtn').addEventListener('click', ()=>{
+  function showPauseDialog(){
     if(!inGame || stageOver || paused) return;
     paused = true;
     SFX.click();
@@ -1577,7 +1600,9 @@ service cloud.firestore{
       showScreen('map');
     };
     overlayEl.classList.remove('hidden');
-  });
+  }
+  el('pauseBtn').addEventListener('click', showPauseDialog);
+  el('mapReturnBtn').addEventListener('click', showPauseDialog);
 
   const speedBtnEl = el('speedBtn');
   speedBtnEl.addEventListener('click', ()=>{ speedMul = speedMul===1?2:1; speedBtnEl.textContent='x'+speedMul; });
@@ -1757,8 +1782,16 @@ service cloud.firestore{
     ctx.rotate(b.angle);
     const castleImg = b.chunkType ? loadedImages.castle[b.chunkType] : null;
     if(castleImg){
-      // 城パーツ専用イラストがあればそれを優先（透過部分はそのまま活かす）
-      ctx.drawImage(castleImg, -b.blockW/2-1,-b.blockH/2-1,b.blockW+2,b.blockH+2);
+      if(b.chunkTotal && b.chunkTotal>1){
+        // 複数パーツで構成される塔：画像を段数分に輪切りにして貼り、1本の塔に見えるよう合成する
+        // index0（一番下）が画像の下部（土台）、index最大（一番上）が画像の上部（尖塔）に対応
+        const sliceH = castleImg.height / b.chunkTotal;
+        const sy = castleImg.height - (b.chunkIndex+1)*sliceH;
+        ctx.drawImage(castleImg, 0, sy, castleImg.width, sliceH, -b.blockW/2-1,-b.blockH/2-1.5,b.blockW+2,b.blockH+3);
+      } else {
+        // 城パーツ専用イラストがあればそれを優先（透過部分はそのまま活かす）
+        ctx.drawImage(castleImg, -b.blockW/2-1,-b.blockH/2-1,b.blockW+2,b.blockH+2);
+      }
     } else {
       const themeKey = stageBackgroundKey(currentStage);
       const blockImg = loadedImages.blocks[themeKey];
@@ -1798,15 +1831,17 @@ service cloud.firestore{
       ctx.fillStyle = `rgba(255,255,255,${b.hitFlash*0.5})`;
       ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     }
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
-    ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    if(!b.chunkType || !loadedImages.castle[b.chunkType]){
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
+      ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    }
     ctx.restore();
   }
 
   const groundColors = {
-    meadow:{a:'#3a3018', b:'#181405'}, forest:{a:'#1c3018', b:'#0a1206'},
-    cave:{a:'#141a2c', b:'#050810'},   snow:{a:'#c8dcf0', b:'#7a94b8'},
-    volcano:{a:'#4a1408', b:'#180402'},
+    meadow:{a:'rgba(58,48,24,0.32)', b:'rgba(24,20,5,0.62)'}, forest:{a:'rgba(28,48,24,0.32)', b:'rgba(10,18,6,0.62)'},
+    cave:{a:'rgba(20,26,44,0.45)', b:'rgba(5,8,16,0.75)'},   snow:{a:'rgba(200,220,240,0.28)', b:'rgba(122,148,184,0.55)'},
+    volcano:{a:'rgba(74,20,8,0.4)', b:'rgba(24,4,2,0.7)'},
   };
   let groundDecor = null;
   function buildGroundDecor(){
@@ -1825,7 +1860,7 @@ service cloud.firestore{
     g.addColorStop(0,'#3a4678'); g.addColorStop(1,'#a8909a');
     ctx.fillStyle = g; ctx.fillRect(0,0,W,GROUND_Y);
     // 太陽のグロー
-    const sx=300, sy=70;
+    const sx=W*0.77, sy=70;
     [ [140,0.04],[100,0.06],[60,0.10],[30,0.16] ].forEach(([r,a])=>{
       ctx.beginPath(); ctx.fillStyle = `rgba(255,220,160,${a})`;
       ctx.arc(sx,sy,r,0,Math.PI*2); ctx.fill();

@@ -87,9 +87,9 @@
       keep:  'castle-keep.png',
     },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
-    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
-      slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:null,
-      spikeball:'monster-spikeball.png', skeleton:null, centaur:null,
+    monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 480x480, png/透過）
+      slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:'monster-icegolem.png',
+      spikeball:'monster-spikeball.png', skeleton:'monster-skeleton.png', centaur:'monster-centaur.png',
     },
   };
   function stageBackgroundKey(stageN){
