@@ -148,12 +148,9 @@
   function updateCanvasSize(){
     const wrap = document.getElementById('canvasWrap');
     if(wrap) wrap.style.aspectRatio = `${W} / ${H}`;
-    if(typeof canvas !== 'undefined' && canvas){
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
-      canvas.width = W * dpr;
-      canvas.height = H * dpr;
-      ctx.setTransform(1,0,0,1,0,0);
-      ctx.scale(dpr, dpr);
+    if(typeof pixiApp !== 'undefined' && pixiApp){
+      pixiApp.renderer.resolution = Math.min(window.devicePixelRatio || 1, 3);
+      pixiApp.renderer.resize(W, H);
     }
   }
 
@@ -509,9 +506,28 @@
   })();
 
   const canvas = el('game');
-  const ctx = canvas.getContext('2d');
   // 高解像度端末（Retina等）対応、および画面の向き（縦/横）に応じた座標系の初期化。
-  // これをしないと、iPhone等の高DPI端末でCanvas全体がぼやけて表示される。
+  // 描画はPixiJS（WebGL）で行う。既存のcanvas要素にPixiのビューを直接割り当てることで、
+  // 入力座標変換（canvasPointFromEvent等）や向き判定のロジックは変更せずに使い回す。
+  let pixiApp = null;
+  const pixiSpriteMap = new Map(); // 物理ボディID -> PIXI表示オブジェクトのマッピング
+  const pixiTexCache = {};
+  const pixiLayers = {};
+  function getPixiTexture(url){
+    if(!url) return PIXI.Texture.EMPTY;
+    if(!pixiTexCache[url]) pixiTexCache[url] = PIXI.Texture.from(url);
+    return pixiTexCache[url];
+  }
+  function initPixi(){
+    pixiApp = new PIXI.Application({
+      view: canvas, width: W, height: H,
+      resolution: Math.min(window.devicePixelRatio || 1, 3), autoDensity: true,
+      backgroundAlpha: 0, antialias: true,
+    });
+    ['bg','ground','launcher','castleGate','castle','flags','barrels','crystals','enemies','trail','current','fx','particles','aim']
+      .forEach(name=>{ const c = new PIXI.Container(); pixiLayers[name] = c; pixiApp.stage.addChild(c); });
+  }
+  initPixi();
   applyOrientationProfile();
   window.addEventListener('resize', ()=>{ if(!inGameSafe()) applyOrientationProfile(); });
   window.addEventListener('orientationchange', ()=>{ if(!inGameSafe()) applyOrientationProfile(); });
@@ -1174,7 +1190,7 @@
       for(let i=0;i<speedMul;i++) Engine.update(engine, 16.666);
       update(dt*speedMul);
     }
-    if(inGame) render();
+    if(inGame) pixiRenderFrame();
     requestAnimationFrame(loop);
   }
 
@@ -1246,75 +1262,450 @@
   }
 
   const stoneThemeTint = {
-    meadow:  'rgba(120,150,90,0.18)',
-    forest:  'rgba(60,110,70,0.22)',
-    cave:    'rgba(40,40,70,0.35)',
-    snow:    'rgba(180,210,235,0.30)',
-    volcano: 'rgba(180,60,30,0.28)',
+    meadow:  {color:0x78965A, alpha:0.18},
+    forest:  {color:0x3C6E46, alpha:0.22},
+    cave:    {color:0x282846, alpha:0.35},
+    snow:    {color:0xB4D2EB, alpha:0.30},
+    volcano: {color:0xB43C1E, alpha:0.28},
   };
   function seededRand(seed){ const x=Math.sin(seed)*10000; return x-Math.floor(x); }
 
-  function drawRectBody(b,color){
-    ctx.save();
-    ctx.translate(b.position.x, b.position.y);
-    ctx.rotate(b.angle);
-    const castleImg = b.chunkType ? loadedImages.castle[b.chunkType] : null;
-    if(castleImg){
-      if(b.chunkTotal && b.chunkTotal>1){
-        // 複数パーツで構成される塔：画像を段数分に輪切りにして貼り、1本の塔に見えるよう合成する
-        // index0（一番下）が画像の下部（土台）、index最大（一番上）が画像の上部（尖塔）に対応
-        const sliceH = castleImg.height / b.chunkTotal;
-        const sy = castleImg.height - (b.chunkIndex+1)*sliceH;
-        ctx.drawImage(castleImg, 0, sy, castleImg.width, sliceH, -b.blockW/2-1,-b.blockH/2-1.5,b.blockW+2,b.blockH+3);
-      } else {
-        // 城パーツ専用イラストがあればそれを優先（透過部分はそのまま活かす）
-        ctx.drawImage(castleImg, -b.blockW/2-1,-b.blockH/2-1,b.blockW+2,b.blockH+2);
-      }
-    } else {
-      const themeKey = stageBackgroundKey(currentStage);
-      const blockImg = loadedImages.blocks[themeKey];
-      if(blockImg){
-        ctx.drawImage(blockImg, -b.blockW/2-0.6,-b.blockH/2-0.6,b.blockW+1.2,b.blockH+1.2);
-        const tint = stoneThemeTint[themeKey];
-        if(tint){
-          ctx.fillStyle = tint;
-          ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+  // ---------- PixiJS 表示オブジェクトの生成/更新 ----------
+  const pixiMaps = { blocks:new Map(), enemies:new Map(), barrels:new Map(), crystals:new Map(), fragments:new Map(), particles:new Map() };
+  let pixiPidCounter = 1;
+  function reconcileMap(map, array, keyFn, createFn, updateFn){
+    const seen = new Set();
+    array.forEach(item=>{
+      const key = keyFn(item);
+      seen.add(key);
+      let entry = map.get(key);
+      if(!entry){ entry = createFn(item); map.set(key, entry); }
+      updateFn(entry, item);
+    });
+    for(const [key,entry] of map){
+      if(!seen.has(key)){ entry.container.destroy({children:true}); map.delete(key); }
+    }
+  }
+
+  function createBlockDisplay(){
+    const c = new PIXI.Container();
+    const base = new PIXI.Sprite(PIXI.Texture.EMPTY);
+    base.anchor.set(0.5);
+    const tintG = new PIXI.Graphics();
+    const crackG = new PIXI.Graphics();
+    const flashG = new PIXI.Graphics();
+    const borderG = new PIXI.Graphics();
+    c.addChild(base, tintG, crackG, flashG, borderG);
+    pixiLayers.castle.addChild(c);
+    return { container:c, base, tintG, crackG, flashG, borderG };
+  }
+  function updateBlockDisplay(entry, b){
+    const c = entry.container;
+    c.position.set(b.position.x, b.position.y);
+    c.rotation = b.angle;
+    const w=b.blockW, h=b.blockH;
+    let usedImage = false;
+    const castlePath = b.chunkType ? IMAGE_ASSETS.castle[b.chunkType] : null;
+    if(castlePath){
+      const tex = getPixiTexture(castlePath);
+      if(tex && tex.valid){
+        if(b.chunkTotal && b.chunkTotal>1){
+          const sliceH = tex.height / b.chunkTotal;
+          const sy = Math.max(0, tex.height - (b.chunkIndex+1)*sliceH);
+          entry.base.texture = new PIXI.Texture(tex.baseTexture, new PIXI.Rectangle(0, sy, tex.width, sliceH));
+        } else {
+          entry.base.texture = tex;
         }
-      } else {
-        ctx.fillStyle = color;
-        ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+        entry.base.width = w+2; entry.base.height = h+3;
+        entry.base.visible = true;
+        usedImage = true;
       }
     }
-    // ヒビ割れ（ダメージを受けた城パーツほどヒビが増える）
+    entry.tintG.clear();
+    if(!usedImage){
+      const themeKey = stageBackgroundKey(currentStage);
+      const tex = getPixiTexture(IMAGE_ASSETS.blocks[themeKey]);
+      if(tex && tex.valid){
+        entry.base.texture = tex;
+        entry.base.width = w+1.2; entry.base.height = h+1.2;
+        entry.base.visible = true;
+        const tint = stoneThemeTint[themeKey];
+        if(tint){ entry.tintG.beginFill(tint.color, tint.alpha); entry.tintG.drawRect(-w/2,-h/2,w,h); entry.tintG.endFill(); }
+      } else {
+        entry.base.visible = false;
+        entry.tintG.beginFill(b.isCrenel?0x6b5546:0x5a4536); entry.tintG.drawRect(-w/2,-h/2,w,h); entry.tintG.endFill();
+      }
+    }
+    entry.crackG.clear();
     if(b.maxHp>1 && b.hp<b.maxHp){
       const dmgFrac = 1 - b.hp/b.maxHp;
-      ctx.fillStyle = `rgba(0,0,0,${dmgFrac*0.35})`;
-      ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
-      ctx.strokeStyle = 'rgba(10,8,6,0.85)'; ctx.lineWidth=1.6;
+      entry.crackG.beginFill(0x000000, dmgFrac*0.35); entry.crackG.drawRect(-w/2,-h/2,w,h); entry.crackG.endFill();
+      entry.crackG.lineStyle(1.6, 0x0a0806, 0.85);
       const nCracks = Math.min(b.maxHp-1, Math.ceil(dmgFrac*(b.maxHp-1)));
       for(let i=0;i<nCracks;i++){
-        const seed = (b.id||1)*17 + i*31;
-        const rx = (seededRand(seed)-0.5)*b.blockW*0.7;
-        const ry = (seededRand(seed+1)-0.5)*b.blockH*0.5;
-        const dx = (seededRand(seed+2)-0.5)*b.blockW*0.5;
-        const dy = b.blockH*0.4;
-        ctx.beginPath();
-        ctx.moveTo(rx, ry-dy/2);
-        ctx.lineTo(rx+dx*0.4, ry);
-        ctx.lineTo(rx+dx, ry+dy/2);
-        ctx.stroke();
+        const seed=(b.id||1)*17+i*31;
+        const rx=(seededRand(seed)-0.5)*w*0.7, ry=(seededRand(seed+1)-0.5)*h*0.5;
+        const dx=(seededRand(seed+2)-0.5)*w*0.5, dy=h*0.4;
+        entry.crackG.moveTo(rx, ry-dy/2);
+        entry.crackG.lineTo(rx+dx*0.4, ry);
+        entry.crackG.lineTo(rx+dx, ry+dy/2);
       }
     }
-    if(b.hitFlash>0){
-      ctx.fillStyle = `rgba(255,255,255,${b.hitFlash*0.5})`;
-      ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
-    }
-    if(!b.chunkType || !loadedImages.castle[b.chunkType]){
-      ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
-      ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
-    }
-    ctx.restore();
+    entry.flashG.clear();
+    if(b.hitFlash>0){ entry.flashG.beginFill(0xffffff, b.hitFlash*0.5); entry.flashG.drawRect(-w/2,-h/2,w,h); entry.flashG.endFill(); }
+    entry.borderG.clear();
+    if(!usedImage){ entry.borderG.lineStyle(1, 0x000000, 0.28); entry.borderG.drawRect(-w/2,-h/2,w,h); }
   }
+
+  function createEnemyDisplay(){
+    const c = new PIXI.Container();
+    const aura = new PIXI.Graphics();
+    const fallback = new PIXI.Graphics();
+    const fallbackText = new PIXI.Text('', {fontFamily:'serif', fontSize:15, fill:0xffffff, align:'center'});
+    fallbackText.anchor.set(0.5);
+    const sprite = new PIXI.Sprite(PIXI.Texture.EMPTY);
+    sprite.anchor.set(0.5);
+    const flashRing = new PIXI.Graphics();
+    const hpBarBg = new PIXI.Graphics();
+    const hpBarFill = new PIXI.Graphics();
+    const hpText = new PIXI.Text('', {fontFamily:'"Courier New",monospace', fontSize:9, fill:0xffffff, align:'center'});
+    hpText.anchor.set(0.5);
+    c.addChild(aura, fallback, fallbackText, sprite, flashRing, hpBarBg, hpBarFill, hpText);
+    pixiLayers.enemies.addChild(c);
+    return { container:c, aura, fallback, fallbackText, sprite, flashRing, hpBarBg, hpBarFill, hpText };
+  }
+  function updateEnemyDisplay(entry, e){
+    entry.container.position.set(e.position.x, e.position.y);
+    const frozen = e.frictionAir>0.5;
+    const rad = e.isBoss ? 21 : 12;
+    entry.aura.clear();
+    if(e.isBoss){ entry.aura.beginFill(0xc68aff, 0.25); entry.aura.drawCircle(0,0,rad+8); entry.aura.endFill(); }
+    const enemyPath = IMAGE_ASSETS.enemy;
+    const tex = enemyPath ? getPixiTexture(enemyPath) : null;
+    if(tex && tex.valid){
+      entry.sprite.texture = tex; entry.sprite.visible = true;
+      entry.sprite.width = rad*2; entry.sprite.height = rad*2;
+      entry.sprite.tint = frozen ? 0x9fd0ee : 0xffffff;
+      entry.fallback.clear(); entry.fallbackText.text='';
+    } else {
+      entry.sprite.visible = false;
+      entry.fallback.clear();
+      const fillColor = frozen ? 0x7fb8e0 : (e.isBoss ? 0x7a3fc4 : (e.hp<e.maxHp ? 0xe07a5a : 0xc9453a));
+      entry.fallback.beginFill(fillColor);
+      entry.fallback.lineStyle(e.isBoss?3:2, e.isBoss?0xffd35e:0x000a);
+      entry.fallback.drawCircle(0,0,rad);
+      entry.fallback.endFill();
+      entry.fallbackText.style.fontSize = e.isBoss?24:15;
+      entry.fallbackText.text = frozen?'🥶':(e.isBoss?'👑':'👹');
+      entry.fallbackText.position.set(0,1);
+    }
+    entry.flashRing.clear();
+    if(e.hitFlash>0){ entry.flashRing.lineStyle(2, 0xffffff, e.hitFlash); entry.flashRing.drawCircle(0,0,rad+5); }
+    entry.hpBarBg.clear(); entry.hpBarFill.clear(); entry.hpText.text='';
+    if(e.maxHp>1){
+      const bw = e.isBoss?44:24;
+      const by = rad + (e.isBoss?10:9);
+      entry.hpBarBg.beginFill(0x000000,0.55); entry.hpBarBg.drawRect(-bw/2,by-3,bw,6); entry.hpBarBg.endFill();
+      entry.hpBarFill.beginFill(e.isBoss?0xc68aff:0x7bd66b); entry.hpBarFill.drawRect(-bw/2,by-3,bw*Math.max(0,e.hp/e.maxHp),6); entry.hpBarFill.endFill();
+      if(e.isBoss){ entry.hpText.text = e.hp+'/'+e.maxHp; entry.hpText.position.set(0,by+11); }
+    }
+  }
+
+  function createSimpleGfxDisplay(layerName){
+    const c = new PIXI.Container();
+    const g = new PIXI.Graphics();
+    c.addChild(g);
+    pixiLayers[layerName].addChild(c);
+    return { container:c, g };
+  }
+  function updateBarrelDisplay(entry, b){
+    entry.container.position.set(b.position.x, b.position.y);
+    entry.container.rotation = b.angle;
+    const g = entry.g; g.clear();
+    g.beginFill(0x6b4526); g.drawRect(-11,-13,22,26); g.endFill();
+    g.lineStyle(2, 0x2a1a0e); g.drawRect(-11,-13,22,26);
+    g.lineStyle(2, 0x000000, 0.35);
+    g.moveTo(-11,-4); g.lineTo(11,-4);
+    g.moveTo(-11,5); g.lineTo(11,5);
+    if(!entry.text){
+      entry.text = new PIXI.Text('⚠', {fontFamily:'serif', fontSize:13, fill:0xff6a3d});
+      entry.text.anchor.set(0.5);
+      entry.container.addChild(entry.text);
+    }
+    entry.text.position.set(0,-1);
+  }
+  function updateCrystalDisplay(entry, c){
+    entry.container.position.set(c.position.x, c.position.y);
+    entry.container.rotation = c.angle;
+    const pulse = 1 + Math.sin(performance.now()/220 + c.position.x)*0.15;
+    const g = entry.g; g.clear();
+    g.beginFill(0x5fc7e0, 0.28); g.drawCircle(0,0,15*pulse); g.endFill();
+    g.beginFill(0x8fe0ff); g.lineStyle(1.5, 0xffffff);
+    g.moveTo(0,-10*pulse); g.lineTo(7,0); g.lineTo(0,10*pulse); g.lineTo(-7,0); g.closePath();
+    g.endFill();
+  }
+  function updateFragmentDisplay(entry, f){
+    entry.container.position.set(f.position.x, f.position.y);
+    entry.g.clear(); entry.g.beginFill(0x7bd66b); entry.g.drawCircle(0,0,6); entry.g.endFill();
+  }
+  function createParticleDisplay(p){
+    const t = new PIXI.Text(p.text, p.big
+      ? {fontFamily:'"Courier New",monospace', fontWeight:'bold', fontSize:16, fill:p.color, stroke:0x000000, strokeThickness:3, align:'center'}
+      : {fontFamily:'"Courier New",monospace', fontSize:11, fill:p.color, align:'center'});
+    t.anchor.set(0.5);
+    pixiLayers.particles.addChild(t);
+    return { container:t };
+  }
+  function updateParticleDisplay(entry, p){
+    const a = Math.max(0, 1 - p.t/p.life);
+    entry.container.alpha = a;
+    if(p.big){
+      const scale = 1 + Math.min(p.t/120,1)*0.25;
+      entry.container.scale.set(scale);
+      entry.container.position.set(p.x, p.y - p.t/30);
+    } else {
+      entry.container.scale.set(1);
+      entry.container.position.set(p.x, p.y - p.t/40);
+    }
+  }
+
+  function pixiRenderFrame(){
+    if(!pixiApp) return;
+    // 画面シェイク：ステージ全体をずらす
+    if(shakeAmount>0.3){
+      pixiApp.stage.position.set((Math.random()-0.5)*shakeAmount, (Math.random()-0.5)*shakeAmount);
+    } else {
+      pixiApp.stage.position.set(0,0);
+    }
+
+    // 背景
+    if(!pixiLayers.bg.sprite){
+      const spr = new PIXI.Sprite(PIXI.Texture.EMPTY);
+      pixiLayers.bg.addChild(spr);
+      pixiLayers.bg.sprite = spr;
+      const dim = new PIXI.Graphics();
+      pixiLayers.bg.addChild(dim);
+      pixiLayers.bg.dim = dim;
+    }
+    const themeKey = stageBackgroundKey(currentStage);
+    const bgTex = getPixiTexture(IMAGE_ASSETS.backgrounds[themeKey]);
+    if(bgTex && bgTex.valid){
+      pixiLayers.bg.sprite.texture = bgTex;
+      pixiLayers.bg.sprite.width = W; pixiLayers.bg.sprite.height = H;
+      pixiLayers.bg.sprite.visible = true;
+      pixiLayers.bg.dim.clear(); pixiLayers.bg.dim.beginFill(0x000000,0.16); pixiLayers.bg.dim.drawRect(0,0,W,H); pixiLayers.bg.dim.endFill();
+    } else {
+      pixiLayers.bg.sprite.visible = false;
+      const g = pixiLayers.bg.dim; g.clear();
+      g.beginFill(0x3a4678); g.drawRect(0,0,W,GROUND_Y); g.endFill();
+      const sx=W*0.77, sy=70;
+      [[140,0.04],[100,0.06],[60,0.10],[30,0.16]].forEach(([r,a])=>{ g.beginFill(0xffdca0,a); g.drawCircle(sx,sy,r); g.endFill(); });
+      g.beginFill(0xffffff, 0.28);
+      [[90,90,1.0],[230,50,0.7],[150,140,0.5]].forEach(([cx,cy,s])=>{
+        [[0,0,26],[20,4,20],[-18,6,18],[8,-10,16]].forEach(([dx,dy,r])=>{ g.drawCircle(cx+dx*s,cy+dy*s,r*s); });
+      });
+      g.endFill();
+    }
+
+    if(!groundDecor) buildGroundDecor();
+    if(!pixiLayers.ground.g){ const g=new PIXI.Graphics(); pixiLayers.ground.addChild(g); pixiLayers.ground.g=g; }
+    { const g = pixiLayers.ground.g; g.clear();
+      const gc = groundColors[themeKey] || {a:'rgba(58,36,22,0.4)', b:'rgba(21,13,8,0.7)'};
+      // rgba文字列から色/透明度を抽出して簡易グラデーション代わりに2段階で塗る
+      function parseRgba(s){ const m=s.match(/rgba?\((\d+),(\d+),(\d+),?([\d.]+)?\)/); return m?{color:(parseInt(m[1])<<16)+(parseInt(m[2])<<8)+parseInt(m[3]), alpha:m[4]?parseFloat(m[4]):1}:{color:0x000000,alpha:0.5}; }
+      const ca = parseRgba(gc.a), cb = parseRgba(gc.b);
+      g.beginFill(ca.color, ca.alpha); g.drawRect(0,GROUND_Y,W,(H-GROUND_Y)*0.4); g.endFill();
+      g.beginFill(cb.color, cb.alpha); g.drawRect(0,GROUND_Y+(H-GROUND_Y)*0.4,W,(H-GROUND_Y)*0.6); g.endFill();
+      g.lineStyle(2, 0xffc896, 0.35); g.moveTo(0,GROUND_Y); g.lineTo(W,GROUND_Y);
+      groundDecor.forEach(d=>{
+        if(d.type==='rock'){ g.beginFill(0x000000,0.28); g.drawEllipse(d.x,d.y,4*d.s,2.4*d.s); g.endFill(); }
+        else {
+          g.lineStyle(2, 0x6ea05a, 0.55);
+          g.moveTo(d.x,d.y); g.lineTo(d.x-3*d.s, d.y-9*d.s);
+          g.moveTo(d.x,d.y); g.lineTo(d.x+3*d.s, d.y-8*d.s);
+        }
+      });
+    }
+
+    // カタパルト（発射台）
+    const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
+    if(!pixiLayers.launcher.sprite){
+      const spr = new PIXI.Sprite(PIXI.Texture.EMPTY); spr.anchor.set(0,0);
+      const fb = new PIXI.Graphics();
+      pixiLayers.launcher.addChild(fb, spr);
+      pixiLayers.launcher.sprite = spr; pixiLayers.launcher.fb = fb;
+    }
+    const launcherTex = getPixiTexture(IMAGE_ASSETS.launcher);
+    if(launcherTex && launcherTex.valid){
+      const muzzleFracX=0.653, muzzleFracY=0.111;
+      const drawH = (GROUND_Y - ANCHOR.y + 14) / (1-muzzleFracY);
+      const drawW = drawH * (launcherTex.width/launcherTex.height);
+      pixiLayers.launcher.sprite.texture = launcherTex;
+      pixiLayers.launcher.sprite.width = drawW; pixiLayers.launcher.sprite.height = drawH;
+      pixiLayers.launcher.sprite.position.set(ax - muzzleFracX*drawW, ay - muzzleFracY*drawH);
+      pixiLayers.launcher.sprite.visible = true;
+      pixiLayers.launcher.fb.clear();
+    } else {
+      pixiLayers.launcher.sprite.visible = false;
+      const g = pixiLayers.launcher.fb; g.clear();
+      [ax-21, ax+21].forEach(wx=>{
+        g.beginFill(0x2a1c10); g.drawCircle(wx, baseY+6, 10); g.endFill();
+        g.beginFill(0x4a3320); g.drawCircle(wx, baseY+6, 7); g.endFill();
+      });
+      g.lineStyle(9, 0x503a22);
+      g.moveTo(ax-24,baseY); g.lineTo(ax,ay);
+      g.moveTo(ax+24,baseY); g.lineTo(ax,ay);
+      g.lineStyle(3.5, 0x8a6438);
+      g.moveTo(ax-24,baseY); g.lineTo(ax,ay);
+      g.moveTo(ax+24,baseY); g.lineTo(ax,ay);
+      g.lineStyle(5, 0x6b4a28);
+      g.moveTo(ax-18,baseY-15); g.lineTo(ax+18,baseY-15);
+      g.beginFill(0x3a2a18); g.drawEllipse(ax,baseY+2,15,7); g.endFill();
+      g.lineStyle(4, 0x3a2a18);
+      g.moveTo(ax-6,baseY-12); g.lineTo(ax,ay);
+      g.lineStyle(2, 0x2a1c10);
+      g.beginFill(0x5a3f24);
+      g.arc(ax, ay+4, 13, Math.PI, 0, false);
+      g.lineTo(ax-13, ay+4);
+      g.closePath(); g.endFill();
+    }
+
+    // ドラッグ中の照準線
+    if(!pixiLayers.aim.g){ const g=new PIXI.Graphics(); pixiLayers.aim.addChild(g); pixiLayers.aim.g=g; }
+    { const g = pixiLayers.aim.g; g.clear();
+      if(dragging && current && dragPoint){
+        g.lineStyle(2, 0xf0c04a, 0.9);
+        g.moveTo(ax-24,baseY-4); g.lineTo(dragPoint.x,dragPoint.y);
+        g.moveTo(ax+24,baseY-4); g.lineTo(dragPoint.x,dragPoint.y);
+        const dx=ANCHOR.x-dragPoint.x, dy=ANCHOR.y-dragPoint.y;
+        if(trajectoryHint){
+          const pts = computeTrajectoryPreview(dx,dy);
+          g.lineStyle(0);
+          g.beginFill(0xffffff, 0.55);
+          pts.forEach((p,i)=>{ const r=Math.max(1,3-i*0.03); g.drawCircle(p.x,p.y,r); });
+          g.endFill();
+        } else {
+          g.lineStyle(2, 0xff8a3d, 0.6);
+          g.moveTo(dragPoint.x,dragPoint.y); g.lineTo(dragPoint.x+dx*1.6, dragPoint.y+dy*1.6);
+        }
+      }
+    }
+
+    // 城門アーチ
+    if(!pixiLayers.castleGate.g){ const g=new PIXI.Graphics(); pixiLayers.castleGate.addChild(g); pixiLayers.castleGate.g=g; }
+    { const g = pixiLayers.castleGate.g; g.clear();
+      if(castleDecor && castleDecor.gate){
+        const gx=castleDecor.gate.x, gy=castleDecor.gate.y;
+        g.beginFill(0x0a0604, 0.75);
+        g.moveTo(gx-15, gy); g.lineTo(gx-15, gy-26);
+        g.arc(gx, gy-26, 15, Math.PI, 0);
+        g.lineTo(gx+15, gy); g.closePath(); g.endFill();
+      }
+    }
+
+    // 城パーツ（塔・城壁・胸壁）
+    reconcileMap(pixiMaps.blocks, blocks, b=>b.id, createBlockDisplay, updateBlockDisplay);
+
+    // 旗
+    if(!pixiLayers.flags.g){ const g=new PIXI.Graphics(); pixiLayers.flags.addChild(g); pixiLayers.flags.g=g; }
+    { const g = pixiLayers.flags.g; g.clear();
+      if(castleDecor && castleDecor.flags){
+        castleDecor.flags.forEach(fb=>{
+          if(!fb || !blocks.includes(fb)) return;
+          const halfH = (fb.blockH||TOWER_CHUNK_H)/2;
+          const cx=fb.position.x, cy=fb.position.y, ang=fb.angle;
+          const cos=Math.cos(ang), sin=Math.sin(ang);
+          function tp(lx,ly){ return { x: cx+lx*cos-ly*sin, y: cy+lx*sin+ly*cos }; }
+          const p0=tp(0,-halfH), p1=tp(0,-halfH-20), p2=tp(16,-halfH-16), p3=tp(0,-halfH-11);
+          g.lineStyle(2, 0x3a2a1a); g.moveTo(p0.x,p0.y); g.lineTo(p1.x,p1.y);
+          g.lineStyle(0); g.beginFill(0xe2483a);
+          g.moveTo(p1.x,p1.y); g.lineTo(p2.x,p2.y); g.lineTo(p3.x,p3.y); g.closePath(); g.endFill();
+        });
+      }
+    }
+
+    // 樽・クリスタル・敵・破片
+    reconcileMap(pixiMaps.barrels, barrels, b=>b.id, ()=>createSimpleGfxDisplay('barrels'), updateBarrelDisplay);
+    reconcileMap(pixiMaps.crystals, crystals, c=>c.id, ()=>createSimpleGfxDisplay('crystals'), updateCrystalDisplay);
+    reconcileMap(pixiMaps.enemies, enemiesArr, e=>e.id, createEnemyDisplay, updateEnemyDisplay);
+    reconcileMap(pixiMaps.fragments, fragments, f=>f.id, ()=>createSimpleGfxDisplay('fx'), updateFragmentDisplay);
+
+    // 弾の軌跡
+    if(!pixiLayers.trail.g){ const g=new PIXI.Graphics(); pixiLayers.trail.addChild(g); pixiLayers.trail.g=g; }
+    { const g = pixiLayers.trail.g; g.clear();
+      if(current){
+        const def = MONSTER_DEFS[current.type];
+        const colorNum = parseInt((def.color||'#ffffff').replace('#','0x'));
+        trailPoints.forEach((p,i)=>{
+          const a = Math.max(0,1-p.t/260)*0.35;
+          const r = 3 + (i/trailPoints.length)*4;
+          g.beginFill(colorNum, a); g.drawCircle(p.x,p.y,r); g.endFill();
+        });
+      }
+    }
+
+    // 発射中のモンスター（当たり判定より大きく表示）
+    if(!pixiLayers.current.sprite){
+      const spr = new PIXI.Sprite(PIXI.Texture.EMPTY); spr.anchor.set(0.5);
+      const fb = new PIXI.Graphics();
+      const fbText = new PIXI.Text('', {fontFamily:'serif', fontSize:13, fill:0xffffff});
+      fbText.anchor.set(0.5);
+      pixiLayers.current.addChild(fb, spr, fbText);
+      pixiLayers.current.sprite = spr; pixiLayers.current.fb = fb; pixiLayers.current.fbText = fbText;
+    }
+    {
+      const spr = pixiLayers.current.sprite, fb = pixiLayers.current.fb, fbText = pixiLayers.current.fbText;
+      if(current){
+        const def = MONSTER_DEFS[current.type];
+        const tex = getPixiTexture(IMAGE_ASSETS.monsters[current.type]);
+        spr.position.set(current.body.position.x, current.body.position.y);
+        spr.rotation = current.body.angle;
+        fb.position.copyFrom(spr.position);
+        fbText.position.copyFrom(spr.position);
+        fbText.rotation = current.body.angle;
+        if(tex && tex.valid){
+          const vr = def.radius*1.9;
+          spr.texture = tex; spr.width = vr*2; spr.height = vr*2; spr.visible = true;
+          fb.clear(); fbText.text='';
+        } else {
+          spr.visible = false;
+          fb.clear();
+          const colorNum = parseInt((def.color||'#ffffff').replace('#','0x'));
+          fb.beginFill(colorNum); fb.lineStyle(1,0x000a); fb.drawCircle(0,0,def.radius); fb.endFill();
+          fbText.text = def.emoji;
+        }
+      } else {
+        spr.visible = false; fb.clear(); fbText.text='';
+      }
+    }
+
+    // 爆発エフェクト
+    if(!pixiLayers.fx.explosionG){ const g=new PIXI.Graphics(); pixiLayers.fx.addChild(g); pixiLayers.fx.explosionG=g; }
+    { const g = pixiLayers.fx.explosionG; g.clear();
+      explosions.forEach(ex=>{
+        const p = ex.t/500;
+        g.lineStyle(3, 0xff8a3d, 1-p); g.drawCircle(ex.x,ex.y,20+p*60);
+      });
+    }
+    // 破片パーティクル
+    if(!pixiLayers.fx.debrisG){ const g=new PIXI.Graphics(); pixiLayers.fx.addChild(g); pixiLayers.fx.debrisG=g; }
+    { const g = pixiLayers.fx.debrisG; g.clear();
+      debris.forEach(d=>{
+        const a = Math.max(0,1-d.t/d.life);
+        const colorNum = parseInt((d.color||'#ffffff').replace('#','0x'));
+        g.beginFill(colorNum, a);
+        const cos=Math.cos(d.rot), sin=Math.sin(d.rot), hs=d.size/2;
+        const corners=[[-hs,-hs],[hs,-hs],[hs,hs],[-hs,hs]].map(([lx,ly])=>({x:d.x+lx*cos-ly*sin, y:d.y+lx*sin+ly*cos}));
+        g.moveTo(corners[0].x,corners[0].y);
+        for(let i=1;i<4;i++) g.lineTo(corners[i].x,corners[i].y);
+        g.closePath(); g.endFill();
+      });
+    }
+
+    // スコア/テキストパーティクル
+    reconcileMap(pixiMaps.particles, particles, p=>{ if(!p._pid) p._pid = pixiPidCounter++; return p._pid; }, createParticleDisplay, updateParticleDisplay);
+  }
+
 
   const groundColors = {
     meadow:{a:'rgba(58,48,24,0.32)', b:'rgba(24,20,5,0.62)'}, forest:{a:'rgba(28,48,24,0.32)', b:'rgba(10,18,6,0.62)'},
@@ -1333,306 +1724,6 @@
     }
   }
 
-  function drawFallbackSky(){
-    const g = ctx.createLinearGradient(0,0,0,GROUND_Y);
-    g.addColorStop(0,'#3a4678'); g.addColorStop(1,'#a8909a');
-    ctx.fillStyle = g; ctx.fillRect(0,0,W,GROUND_Y);
-    // 太陽のグロー
-    const sx=W*0.77, sy=70;
-    [ [140,0.04],[100,0.06],[60,0.10],[30,0.16] ].forEach(([r,a])=>{
-      ctx.beginPath(); ctx.fillStyle = `rgba(255,220,160,${a})`;
-      ctx.arc(sx,sy,r,0,Math.PI*2); ctx.fill();
-    });
-    // 雲
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    [[90,90,1.0],[230,50,0.7],[150,140,0.5]].forEach(([cx,cy,s])=>{
-      [[0,0,26],[20,4,20],[-18,6,18],[8,-10,16]].forEach(([dx,dy,r])=>{
-        ctx.beginPath(); ctx.arc(cx+dx*s,cy+dy*s,r*s,0,Math.PI*2); ctx.fill();
-      });
-    });
-  }
-
-  function render(){
-    ctx.clearRect(0,0,W,H);
-    ctx.save();
-    if(shakeAmount>0.3){
-      const sx=(Math.random()-0.5)*shakeAmount, sy=(Math.random()-0.5)*shakeAmount;
-      ctx.translate(sx,sy);
-    }
-    const bgImg = loadedImages.backgrounds[stageBackgroundKey(currentStage)];
-    if(bgImg){
-      ctx.drawImage(bgImg, 0, 0, W, H);
-      ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(0,0,W,H); // 手前の要素を見やすくする薄暗め
-    } else {
-      drawFallbackSky();
-    }
-
-    if(!groundDecor) buildGroundDecor();
-
-    const g = ctx.createLinearGradient(0,GROUND_Y,0,H);
-    const gc = groundColors[stageBackgroundKey(currentStage)] || {a:'#3a2416', b:'#150d08'};
-    g.addColorStop(0,gc.a); g.addColorStop(1,gc.b);
-    ctx.fillStyle = g; ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
-    ctx.strokeStyle = 'rgba(255,200,150,0.35)'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(0,GROUND_Y); ctx.lineTo(W,GROUND_Y); ctx.stroke();
-    // 地面のディテール（岩・草）
-    groundDecor.forEach(d=>{
-      if(d.type==='rock'){
-        ctx.beginPath(); ctx.fillStyle='rgba(0,0,0,0.28)';
-        ctx.ellipse(d.x,d.y,4*d.s,2.4*d.s,0,0,Math.PI*2); ctx.fill();
-      } else {
-        ctx.strokeStyle='rgba(110,160,90,0.55)'; ctx.lineWidth=2;
-        ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x-3*d.s,d.y-9*d.s); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x+3*d.s,d.y-8*d.s); ctx.stroke();
-      }
-    });
-
-    // カタパルト（専用イラストがあればそれを優先。発射口の位置をANCHORに正確に合わせる）
-    const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
-    const launcherImg = loadedImages.launcher;
-    if(launcherImg){
-      const muzzleFracX = 0.653, muzzleFracY = 0.111;
-      const drawH = (GROUND_Y - ANCHOR.y + 14) / (1 - muzzleFracY);
-      const drawW = drawH * (launcherImg.width / launcherImg.height);
-      const drawX = ax - muzzleFracX*drawW;
-      const drawY = ay - muzzleFracY*drawH;
-      ctx.drawImage(launcherImg, drawX, drawY, drawW, drawH);
-    } else {
-    ctx.lineCap='round';
-    // 車輪
-    [ax-21, ax+21].forEach(wx=>{
-      ctx.beginPath(); ctx.fillStyle='#2a1c10'; ctx.arc(wx, baseY+6, 10, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.fillStyle='#4a3320'; ctx.arc(wx, baseY+6, 7, 0, Math.PI*2); ctx.fill();
-      ctx.strokeStyle='#1a1008'; ctx.lineWidth=2;
-      for(let sp=0; sp<4; sp++){
-        const a=sp*Math.PI/2;
-        ctx.beginPath(); ctx.moveTo(wx,baseY+6); ctx.lineTo(wx+Math.cos(a)*7, baseY+6+Math.sin(a)*7); ctx.stroke();
-      }
-    });
-    // 脚（太め・二重トーン）
-    ctx.strokeStyle = '#503a22'; ctx.lineWidth=9;
-    ctx.beginPath(); ctx.moveTo(ax-24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.strokeStyle = '#8a6438'; ctx.lineWidth=3.5;
-    ctx.beginPath(); ctx.moveTo(ax-24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    // 横木の補強
-    ctx.strokeStyle = '#6b4a28'; ctx.lineWidth=5;
-    ctx.beginPath(); ctx.moveTo(ax-18,baseY-15); ctx.lineTo(ax+18,baseY-15); ctx.stroke();
-    // 支柱の金具
-    ctx.beginPath(); ctx.fillStyle='#3a2a18'; ctx.ellipse(ax,baseY+2,15,7,0,0,Math.PI*2); ctx.fill();
-    // アーム（アンカーへ向かう斜めの腕）とロープ
-    ctx.strokeStyle = '#3a2a18'; ctx.lineWidth=4;
-    ctx.beginPath(); ctx.moveTo(ax-6,baseY-12); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.strokeStyle = 'rgba(200,170,120,0.7)'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(ax-18,baseY-15); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+18,baseY-15); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.setLineDash([]);
-    // カップ（モンスターを乗せる受け皿）
-    ctx.beginPath(); ctx.fillStyle='#5a3f24'; ctx.arc(ax,ay+4,13,0,Math.PI,false); ctx.fill();
-    ctx.strokeStyle='#2a1c10'; ctx.lineWidth=2; ctx.stroke();
-    }
-
-    if(dragging && current && dragPoint){
-      ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
-      ctx.beginPath(); ctx.moveTo(ax-24,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(ax+24,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
-      ctx.setLineDash([]);
-      const dx=ANCHOR.x-dragPoint.x, dy=ANCHOR.y-dragPoint.y;
-      if(trajectoryHint){
-        const pts = computeTrajectoryPreview(dx,dy);
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        pts.forEach((p,i)=>{
-          const r = Math.max(1, 3 - i*0.03);
-          ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
-        });
-      } else {
-        ctx.strokeStyle='rgba(255,138,61,0.6)'; ctx.lineWidth=2;
-        ctx.beginPath(); ctx.moveTo(dragPoint.x,dragPoint.y); ctx.lineTo(dragPoint.x+dx*1.6, dragPoint.y+dy*1.6); ctx.stroke();
-      }
-    }
-
-    if(castleDecor && castleDecor.gate){
-      const gx=castleDecor.gate.x, gy=castleDecor.gate.y;
-      ctx.fillStyle = 'rgba(10,6,4,0.75)';
-      ctx.beginPath();
-      ctx.moveTo(gx-15, gy);
-      ctx.lineTo(gx-15, gy-26);
-      ctx.arc(gx, gy-26, 15, Math.PI, 0);
-      ctx.lineTo(gx+15, gy);
-      ctx.closePath(); ctx.fill();
-    }
-
-    blocks.forEach(b=> drawRectBody(b, b.isCrenel ? '#6b5546' : '#5a4536'));
-
-    // 旗（塔の最上段パーツに追従して描く。パーツが崩れると一緒に傾く）
-    if(castleDecor && castleDecor.flags){
-      castleDecor.flags.forEach(fb=>{
-        if(!fb || !blocks.includes(fb)) return;
-        const halfH = (fb.blockH||TOWER_CHUNK_H)/2;
-        ctx.save();
-        ctx.translate(fb.position.x, fb.position.y);
-        ctx.rotate(fb.angle);
-        ctx.strokeStyle = '#3a2a1a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(0,-halfH); ctx.lineTo(0,-halfH-20); ctx.stroke();
-        ctx.fillStyle = '#e2483a';
-        ctx.beginPath();
-        ctx.moveTo(0,-halfH-20);
-        ctx.lineTo(16,-halfH-16);
-        ctx.lineTo(0,-halfH-11);
-        ctx.closePath(); ctx.fill();
-        ctx.restore();
-      });
-    }
-
-    barrels.forEach(b=>{
-      ctx.save();
-      ctx.translate(b.position.x, b.position.y);
-      ctx.rotate(b.angle);
-      ctx.fillStyle = '#6b4526';
-      ctx.fillRect(-11,-13,22,26);
-      ctx.strokeStyle = '#2a1a0e'; ctx.lineWidth=2;
-      ctx.strokeRect(-11,-13,22,26);
-      ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(-11,-4); ctx.lineTo(11,-4); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(-11,5); ctx.lineTo(11,5); ctx.stroke();
-      ctx.font='13px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillStyle='#ff6a3d';
-      ctx.fillText('⚠', 0, -1);
-      ctx.restore();
-    });
-
-    crystals.forEach(c=>{
-      const pulse = 1 + Math.sin(performance.now()/220 + c.position.x)*0.15;
-      ctx.save();
-      ctx.translate(c.position.x, c.position.y);
-      ctx.rotate(c.angle);
-      ctx.beginPath();
-      ctx.fillStyle = 'rgba(95,199,224,0.28)';
-      ctx.arc(0,0,15*pulse,0,Math.PI*2); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(0,-10*pulse); ctx.lineTo(7,0); ctx.lineTo(0,10*pulse); ctx.lineTo(-7,0);
-      ctx.closePath();
-      ctx.fillStyle = '#8fe0ff';
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth=1.5; ctx.stroke();
-      ctx.restore();
-    });
-
-    enemiesArr.forEach(e=>{
-      const frozen = e.frictionAir>0.5;
-      const rad = e.isBoss ? 21 : 12;
-      if(e.isBoss){
-        ctx.beginPath();
-        ctx.fillStyle = 'rgba(198,138,255,0.25)';
-        ctx.arc(e.position.x,e.position.y,rad+8,0,Math.PI*2); ctx.fill();
-      }
-      if(loadedImages.enemy){
-        ctx.save();
-        ctx.translate(e.position.x, e.position.y);
-        if(frozen){ ctx.filter = 'hue-rotate(160deg) saturate(1.3)'; }
-        const d = rad*2;
-        ctx.drawImage(loadedImages.enemy, -rad, -rad, d, d);
-        ctx.restore();
-      } else {
-        ctx.beginPath();
-        ctx.fillStyle = frozen ? '#7fb8e0' : (e.isBoss ? '#7a3fc4' : (e.hp<e.maxHp ? '#e07a5a' : '#c9453a'));
-        ctx.arc(e.position.x,e.position.y,rad,0,Math.PI*2); ctx.fill();
-        ctx.strokeStyle= e.isBoss ? '#ffd35e' : '#000a'; ctx.lineWidth=e.isBoss?3:2; ctx.stroke();
-        ctx.font=(e.isBoss?'24px':'15px')+' serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillStyle='#fff';
-        ctx.fillText(frozen?'🥶':(e.isBoss?'👑':'👹'), e.position.x, e.position.y+1);
-      }
-      if(e.hitFlash>0){
-        ctx.beginPath(); ctx.strokeStyle=`rgba(255,255,255,${e.hitFlash})`; ctx.lineWidth=2;
-        ctx.arc(e.position.x,e.position.y,rad+5,0,Math.PI*2); ctx.stroke();
-      }
-      if(e.maxHp>1){
-        const bw = e.isBoss ? 44 : 24;
-        const by = e.position.y + rad + (e.isBoss?10:9);
-        ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(e.position.x-bw/2, by-3, bw, 6);
-        ctx.fillStyle= e.isBoss ? '#c68aff' : '#7bd66b';
-        ctx.fillRect(e.position.x-bw/2, by-3, bw*Math.max(0,e.hp/e.maxHp), 6);
-        if(e.isBoss){
-          ctx.font='9px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.textAlign='center';
-          ctx.fillText(e.hp+'/'+e.maxHp, e.position.x, by+11);
-        }
-      }
-    });
-
-    fragments.forEach(f=>{ ctx.beginPath(); ctx.fillStyle='#7bd66b'; ctx.arc(f.position.x,f.position.y,6,0,Math.PI*2); ctx.fill(); });
-
-    if(current){
-      const def = MONSTER_DEFS[current.type];
-      trailPoints.forEach((p,i)=>{
-        const a = Math.max(0, 1 - p.t/260) * 0.35;
-        const r = 3 + (i/trailPoints.length)*4;
-        ctx.beginPath(); ctx.fillStyle = def.color; ctx.globalAlpha = a;
-        ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
-        ctx.globalAlpha = 1;
-      });
-      const img = loadedImages.monsters[current.type];
-      if(img){
-        const vr = def.radius * 1.9; // 見た目は当たり判定より大きく表示
-        ctx.save();
-        ctx.translate(current.body.position.x, current.body.position.y);
-        ctx.rotate(current.body.angle);
-        ctx.drawImage(img, -vr, -vr, vr*2, vr*2);
-        ctx.restore();
-      } else {
-        ctx.beginPath(); ctx.fillStyle=def.color;
-        ctx.arc(current.body.position.x, current.body.position.y, def.radius, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle='#000a'; ctx.lineWidth=1; ctx.stroke();
-        ctx.save();
-        ctx.translate(current.body.position.x, current.body.position.y);
-        ctx.rotate(current.body.angle);
-        ctx.font='13px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText(def.emoji, 0, 1);
-        ctx.restore();
-      }
-    }
-
-    explosions.forEach(ex=>{
-      const p = ex.t/500;
-      ctx.beginPath(); ctx.strokeStyle=`rgba(255,138,61,${1-p})`; ctx.lineWidth=3;
-      ctx.arc(ex.x,ex.y,20+p*60,0,Math.PI*2); ctx.stroke();
-    });
-
-    particles.forEach(p=>{
-      const a = 1-p.t/p.life;
-      ctx.globalAlpha = Math.max(0,a);
-      if(p.big){
-        const scale = 1 + Math.min(p.t/120, 1)*0.25;
-        ctx.save();
-        ctx.translate(p.x, p.y - p.t/30);
-        ctx.scale(scale, scale);
-        ctx.font='bold 16px "Courier New",monospace'; ctx.textAlign='center';
-        ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.6)';
-        ctx.strokeText(p.text, 0, 0);
-        ctx.fillStyle = p.color;
-        ctx.fillText(p.text, 0, 0);
-        ctx.restore();
-      } else {
-        ctx.font='11px "Courier New",monospace'; ctx.textAlign='center';
-        ctx.fillStyle = p.color;
-        ctx.fillText(p.text, p.x, p.y - p.t/40);
-      }
-      ctx.globalAlpha = 1;
-    });
-
-    debris.forEach(d=>{
-      const a = Math.max(0, 1 - d.t/d.life);
-      ctx.save();
-      ctx.globalAlpha = a;
-      ctx.translate(d.x, d.y);
-      ctx.rotate(d.rot);
-      ctx.fillStyle = d.color;
-      ctx.fillRect(-d.size/2,-d.size/2,d.size,d.size);
-      ctx.restore();
-    });
-
-    ctx.restore(); // シェイク用のtranslateを解除
-  }
 
   // ---------- 起動 ----------
   preloadImages();
