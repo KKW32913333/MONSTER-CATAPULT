@@ -45,6 +45,21 @@ html,body{
   padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
   isolation:isolate;
 }
+
+/* ---------- 横画面固定（スマホで縦持ちの場合、画面ごと90度回転させて横向き表示にする） ----------
+   iOS Safariは画面回転を固定するネイティブAPIに対応していないため、CSSで疑似的に固定する。
+   スマホ幅（926px以下）で縦持ちの場合のみ発動し、タブレット・PCでは通常表示のまま。 */
+@media screen and (orientation:portrait) and (max-width:926px){
+  html{ overflow:hidden; }
+  body{
+    position:fixed; top:0; left:0;
+    width:100vh; height:100vw;
+    transform-origin:top left;
+    transform:rotate(90deg) translateY(-100%);
+    overflow:hidden;
+  }
+  #app{ max-width:600px; width:100%; margin:0 auto; }
+}
 /* オーロラ風の背景ブロブ（すべての画面の裏に固定） */
 #app::before{
   content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;

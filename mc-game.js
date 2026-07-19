@@ -80,6 +80,12 @@
       snow:    'block-stone.jpg',
       volcano: 'block-stone.jpg',
     },
+    // 城パーツ専用の立体イラスト（塔・城壁・キープ）。未設定ならblocksのテクスチャにフォールバック
+    castle: {
+      tower: 'castle-tower.png',
+      wall:  'castle-wall.png',
+      keep:  'castle-keep.png',
+    },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
     monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
       slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:null,
@@ -90,7 +96,7 @@
     const { worldIndex } = localStageInfo(stageN);
     return (WORLDS[worldIndex-1] && WORLDS[worldIndex-1].theme) || 'meadow';
   }
-  const loadedImages = { monsters:{}, backgrounds:{}, blocks:{} };
+  const loadedImages = { monsters:{}, backgrounds:{}, blocks:{}, castle:{} };
   function preloadImages(){
     const tryLoad = (key, path, target)=>{
       if(!path) return;
@@ -101,6 +107,7 @@
     };
     Object.keys(IMAGE_ASSETS.backgrounds).forEach(k=> tryLoad(k, IMAGE_ASSETS.backgrounds[k], loadedImages.backgrounds));
     Object.keys(IMAGE_ASSETS.blocks).forEach(k=> tryLoad(k, IMAGE_ASSETS.blocks[k], loadedImages.blocks));
+    Object.keys(IMAGE_ASSETS.castle).forEach(k=> tryLoad(k, IMAGE_ASSETS.castle[k], loadedImages.castle));
     tryLoad('enemy', IMAGE_ASSETS.enemy, loadedImages);
     MONSTER_ORDER.forEach(k=> tryLoad(k, IMAGE_ASSETS.monsters[k], loadedImages.monsters));
   }
@@ -110,14 +117,15 @@
     return path ? `background-image:url('${path}'); background-size:145%; background-position:center;` : '';
   }
 
-  const ANCHOR = {x:66, y:300};
+  const ANCHOR = {x:54, y:296};
   const GROUND_Y = 392;
   const MAX_PULL = 78;
   const LAUNCH_SCALE = 0.17;
   const TURN_DURATION = 3400;
   const W = 390, H = 460;
-  const BLOCK_W = 34, BLOCK_H = 34, BLOCK_GAP = 4;
+  const BLOCK_W = 30, BLOCK_H = 30, BLOCK_GAP = 4;
   const FORT_RIGHT_EDGE = W - 46;
+  const CHUNK_W = 44, TOWER_CHUNK_H = 56, CHUNK_GAP = 3, WALL_H = 46;
 
   // ---------- プレイヤー永続状態 ----------
   function defaultState(){
@@ -524,7 +532,7 @@
     const boss = localN % 5 === 0;
     return {
       rows: 2+capped + (boss?1:0),
-      baseCount: Math.min(3+capped + (boss?1:0), 6), // 城壁がカタパルト側までせり出さないよう上限
+      baseCount: Math.min(3+capped + (boss?1:0), 5), // 城壁がカタパルト側までせり出さないよう上限
       enemyHp: (localN>=7 ? 2 : 1) + worldBonus,
       ammoLen: Math.max(4, 5+Math.min(localN,5)) + (boss?3:0) + worldBonus,
       threshBonus: Math.min(localN,10)*0.035 + worldBonus*0.05,
@@ -540,76 +548,63 @@
 
   function buildFortress(sp, stageN){
     castleDecor = { flags: [] };
-    const baseY = GROUND_Y - BLOCK_H/2 - 2;
-    const wallCount = sp.baseCount;             // 城壁の横幅（ブロック数）
-    const wallRows = 2;                          // 城壁の厚み（段数）
-    const towerRows = Math.min(sp.rows, 4);       // 塔が城壁の上にさらに積む段数（画面上部にはみ出さないよう上限あり）
-    const xs = rowBlocksX(wallCount);
-    const leftX = Math.min.apply(null, xs);
-    const rightX = Math.max.apply(null, xs);
+    const baseY = GROUND_Y - TOWER_CHUNK_H/2 - 2;
+    const rightX = FORT_RIGHT_EDGE;
+    const leftX = rightX - (sp.baseCount-1)*38;
+    const towerChunkCount = Math.min(4, 2 + Math.floor((sp.rows-3)/2));
+    const chunkHp = Math.min(4, 2 + Math.floor(sp.rows/4));
 
-    // ① 城壁（横方向に2段）
-    for(let r=0; r<wallRows; r++){
-      const y = baseY - r*(BLOCK_H+BLOCK_GAP);
-      xs.forEach(x=> addBlock(x,y,BLOCK_W,BLOCK_H));
-    }
-    const wallTopY = baseY - (wallRows-1)*(BLOCK_H+BLOCK_GAP);
-
-    // ② 城壁の上の胸壁（凹凸）。1つおきに小さいブロックを乗せる（隙間には敵を立たせる）
-    for(let i=0;i<xs.length;i+=2){
-      addBlock(xs[i], wallTopY-(BLOCK_H+BLOCK_GAP)/2-7, 16, 14, true);
-    }
-
-    // ③ 両端の塔（城壁より高く積み上げる）
-    function buildTower(x, extraRows){
-      let topBlock = null;
-      for(let r=wallRows; r<wallRows+extraRows; r++){
-        const y = baseY - r*(BLOCK_H+BLOCK_GAP);
-        topBlock = addBlock(x,y,BLOCK_W,BLOCK_H);
+    // 塔（複数の大きなパーツを積んで構成。各パーツが個別に耐久力を持つ）
+    function buildTower(x, count, hpBonus, type){
+      let topBlock = null, lastCenterY = 0;
+      for(let i=0;i<count;i++){
+        const y = baseY - i*(TOWER_CHUNK_H+CHUNK_GAP);
+        topBlock = addBlock(x, y, CHUNK_W, TOWER_CHUNK_H, chunkHp+hpBonus, false, type);
+        lastCenterY = y;
       }
-      const topY = baseY - (wallRows+extraRows-1)*(BLOCK_H+BLOCK_GAP);
-      return {topBlock, topY};
+      return { topBlock, topEdgeY: lastCenterY - TOWER_CHUNK_H/2 };
     }
-    const leftTower = buildTower(leftX, towerRows);
-    const rightTower = buildTower(rightX, towerRows);
-    castleDecor.flags.push(leftTower.topBlock, rightTower.topBlock);
-    castleDecor.gate = {x:(leftX+rightX)/2, y:baseY+BLOCK_H/2+2};
 
-    // ④ ボスステージ：中央にひときわ高い主塔（キープ）
+    const leftTower = buildTower(leftX, towerChunkCount, 0, 'tower');
+    const rightTower = buildTower(rightX, towerChunkCount, 0, 'tower');
+    castleDecor.flags.push(leftTower.topBlock, rightTower.topBlock);
+    castleDecor.gate = { x:(leftX+rightX)/2, y:baseY+TOWER_CHUNK_H/2+2 };
+
+    // 城壁（塔と塔をつなぐ大きな一枚。これも壊れる）
+    const wallX = (leftX+rightX)/2;
+    const wallWidth = Math.max(30, (rightX-leftX) - CHUNK_W - 14);
+    const wallY = baseY + (TOWER_CHUNK_H-WALL_H)/2;
+    addBlock(wallX, wallY, wallWidth, WALL_H, chunkHp, false, 'wall');
+    // 城壁上の小さな胸壁（1発で壊れる装飾。塔の付け根寄りに配置し敵と重ならないようにする）
+    addBlock(wallX-wallWidth*0.42, wallY-WALL_H/2-9, 14,14, 1, true);
+    addBlock(wallX+wallWidth*0.42, wallY-WALL_H/2-9, 14,14, 1, true);
+
+    // ボスステージ：中央にひときわ高いキープ（主塔）
     let keep = null, keepX = null;
     if(sp.isBoss){
-      keepX = (leftX+rightX)/2;
-      keep = buildTower(keepX, Math.min(towerRows+1, 5));
+      keepX = wallX;
+      keep = buildTower(keepX, Math.min(towerChunkCount+1, 4), 1, 'keep');
       castleDecor.flags.push(keep.topBlock);
     }
 
-    // ---------- 敵配置（すべて構造物の"上"、隣接ブロックと重ならない位置） ----------
+    // ---------- 敵配置 ----------
     if(sp.isBoss){
-      addBoss(keepX, keep.topY-BLOCK_H/2-26, bossHpForStage(stageN));
-      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
-      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
-    } else {
-      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
-      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
+      addBoss(keepX, keep.topEdgeY-26, bossHpForStage(stageN));
     }
-    // 城壁の上（胸壁の隙間＝奇数インデックス）に立つ雑魚。
-    // 両端の塔・中央キープの柱が通る位置（leftX/rightX/keepX付近）は必ず除外する。
-    const excludeXs = [leftX, rightX];
-    if(sp.isBoss) excludeXs.push(keepX);
-    const wallEnemyCount = Math.max(1, Math.min(4, sp.rows-1));
-    const oddSlots = [];
-    for(let i=1;i<xs.length;i+=2){
-      const tooClose = excludeXs.some(ex=> Math.abs(xs[i]-ex) < BLOCK_W);
-      if(!tooClose) oddSlots.push(xs[i]);
-    }
-    for(let i=0;i<wallEnemyCount && i<oddSlots.length;i++){
-      const idx = Math.floor(i*(oddSlots.length/wallEnemyCount));
-      addEnemy(oddSlots[idx], wallTopY-BLOCK_H/2-15, sp.enemyHp);
+    addEnemy(leftX, leftTower.topEdgeY-16, sp.enemyHp);
+    addEnemy(rightX, rightTower.topEdgeY-16, sp.enemyHp);
+
+    if(!sp.isBoss){
+      const wallEnemyCount = Math.max(1, Math.min(2, Math.floor(sp.rows/3)));
+      const wallEnemyOffsets = wallEnemyCount===1 ? [0] : [-wallWidth*0.16, wallWidth*0.16];
+      for(let i=0;i<wallEnemyCount;i++){
+        addEnemy(wallX+wallEnemyOffsets[i], wallY-WALL_H/2-15, sp.enemyHp);
+      }
     }
 
     // 爆発樽の配置（ステージ3以降。城壁とカタパルトの間の安全な範囲内にのみ設置）
     const barrelSpacing = 30;
-    const barrelZoneRight = leftX - BLOCK_W/2 - 14;
+    const barrelZoneRight = leftX - CHUNK_W/2 - 14;
     const barrelZoneLeft = 112;
     const maxBarrelsFit = Math.max(0, Math.floor((barrelZoneRight - barrelZoneLeft) / barrelSpacing) + 1);
     const actualBarrelCount = Math.min(sp.barrelCount, maxBarrelsFit);
@@ -617,15 +612,39 @@
       addBarrel(barrelZoneRight - i*barrelSpacing, GROUND_Y-16);
     }
 
-    // ⑤ 隠しクリスタル：砦の右側の空き地に常設。狙って壊すと大きなボーナス
+    // 隠しクリスタル：砦の右側の空き地に常設
     addCrystal(374, GROUND_Y-11);
   }
 
-  function addBlock(x,y,w,h,isCrenel){
-    const b = Bodies.rectangle(x,y,w,h,{density:isCrenel?0.0008:0.0015, friction:0.6, restitution:0.05, label:'block'});
-    b.blockW=w; b.blockH=h; b.isCrenel=!!isCrenel;
+  function addBlock(x,y,w,h,hp,isCrenel,chunkType){
+    const b = Bodies.rectangle(x,y,w,h,{density:isCrenel?0.0008:0.0022, friction:0.6, restitution:0.05, label:'block'});
+    b.blockW=w; b.blockH=h; b.isCrenel=!!isCrenel; b.chunkType=chunkType||null;
+    b.hp = hp||1; b.maxHp = hp||1; b.hitFlash=0;
     blocks.push(b); World.add(world,b);
     return b;
+  }
+  function damageChunk(body){
+    body.hp -= 1;
+    if(body.hp <= 0){
+      destroyChunk(body);
+    } else {
+      body.hitFlash = 1.0;
+      spawnDebris(body.position.x, body.position.y, '#8a7263', 4);
+      triggerShake(3);
+      SFX.hit();
+    }
+  }
+  function destroyChunk(body){
+    const idx = blocks.indexOf(body);
+    if(idx>=0) blocks.splice(idx,1);
+    toRemove.push(body);
+    const points = body.isCrenel ? 30 : 80;
+    stageScore += points;
+    pushParticle(body.position.x, body.position.y, (body.isCrenel?'+':'崩壊! +')+points, '#ffb057');
+    spawnDebris(body.position.x, body.position.y, '#8a7263', body.isCrenel?7:18);
+    triggerShake(body.isCrenel?4:11);
+    SFX.barrel();
+    updateHUD();
   }
   function addEnemy(x,y,hp){
     const e = Bodies.circle(x,y,12,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
@@ -725,6 +744,14 @@
         damageEnemy(a, 1, 'proj');
       }
     }
+    if(a.label==='block' && blocks.includes(a) && a.hp>0){
+      const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
+      const mult = levelMult(current ? current.type : null);
+      const required = (BASE_THRESHOLD*1.1) * (1 + stageParams(currentStage).threshBonus);
+      if(relSpeed*mult > required && b.label!=='ground' && b.label!=='wall'){
+        damageChunk(a);
+      }
+    }
     if(a.label==='barrel' && barrels.includes(a) && !a.exploded){
       const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
       if(relSpeed > 1.0 && b.label!=='ground'){
@@ -809,6 +836,11 @@
       const d = Vector.magnitude(Vector.sub(e.position, pos));
       if(d < KILL_RADIUS) damageEnemy(e, e.isBoss?2:e.hp, 'explosion');
     });
+    [...blocks].forEach(bl=>{
+      if(bl.hp===undefined) return;
+      const d = Vector.magnitude(Vector.sub(bl.position, pos));
+      if(d < KILL_RADIUS) damageChunk(bl);
+    });
     pushParticle(pos.x, pos.y-10, '誘爆!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
     spawnDebris(pos.x, pos.y, '#ff8a3d', 14);
@@ -868,6 +900,11 @@
     [...enemiesArr].forEach(e=>{
       const d = Vector.magnitude(Vector.sub(e.position, pos));
       if(d<KILL_RADIUS) damageEnemy(e, e.isBoss?3:e.hp, 'explosion');
+    });
+    [...blocks].forEach(bl=>{
+      if(bl.hp===undefined) return;
+      const d = Vector.magnitude(Vector.sub(bl.position, pos));
+      if(d<KILL_RADIUS) damageChunk(bl);
     });
     pushParticle(pos.x, pos.y-10, '爆発!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
@@ -1134,6 +1171,7 @@
     }
 
     enemiesArr.forEach(e=>{ if(e.hitFlash>0) e.hitFlash = Math.max(0, e.hitFlash - dt/300); });
+    blocks.forEach(bl=>{ if(bl.hitFlash>0) bl.hitFlash = Math.max(0, bl.hitFlash - dt/300); });
 
     shakeAmount = Math.max(0, shakeAmount - dt*0.045);
 
@@ -1181,21 +1219,53 @@
     snow:    'rgba(180,210,235,0.30)',
     volcano: 'rgba(180,60,30,0.28)',
   };
+  function seededRand(seed){ const x=Math.sin(seed)*10000; return x-Math.floor(x); }
+
   function drawRectBody(b,color){
     ctx.save();
     ctx.translate(b.position.x, b.position.y);
     ctx.rotate(b.angle);
-    const themeKey = stageBackgroundKey(currentStage);
-    const blockImg = loadedImages.blocks[themeKey];
-    if(blockImg){
-      ctx.drawImage(blockImg, -b.blockW/2-0.6,-b.blockH/2-0.6,b.blockW+1.2,b.blockH+1.2);
-      const tint = stoneThemeTint[themeKey];
-      if(tint){
-        ctx.fillStyle = tint;
+    const castleImg = b.chunkType ? loadedImages.castle[b.chunkType] : null;
+    if(castleImg){
+      // 城パーツ専用イラストがあればそれを優先（透過部分はそのまま活かす）
+      ctx.drawImage(castleImg, -b.blockW/2-1,-b.blockH/2-1,b.blockW+2,b.blockH+2);
+    } else {
+      const themeKey = stageBackgroundKey(currentStage);
+      const blockImg = loadedImages.blocks[themeKey];
+      if(blockImg){
+        ctx.drawImage(blockImg, -b.blockW/2-0.6,-b.blockH/2-0.6,b.blockW+1.2,b.blockH+1.2);
+        const tint = stoneThemeTint[themeKey];
+        if(tint){
+          ctx.fillStyle = tint;
+          ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+        }
+      } else {
+        ctx.fillStyle = color;
         ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
       }
-    } else {
-      ctx.fillStyle = color;
+    }
+    // ヒビ割れ（ダメージを受けた城パーツほどヒビが増える）
+    if(b.maxHp>1 && b.hp<b.maxHp){
+      const dmgFrac = 1 - b.hp/b.maxHp;
+      ctx.fillStyle = `rgba(0,0,0,${dmgFrac*0.35})`;
+      ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+      ctx.strokeStyle = 'rgba(10,8,6,0.85)'; ctx.lineWidth=1.6;
+      const nCracks = Math.min(b.maxHp-1, Math.ceil(dmgFrac*(b.maxHp-1)));
+      for(let i=0;i<nCracks;i++){
+        const seed = (b.id||1)*17 + i*31;
+        const rx = (seededRand(seed)-0.5)*b.blockW*0.7;
+        const ry = (seededRand(seed+1)-0.5)*b.blockH*0.5;
+        const dx = (seededRand(seed+2)-0.5)*b.blockW*0.5;
+        const dy = b.blockH*0.4;
+        ctx.beginPath();
+        ctx.moveTo(rx, ry-dy/2);
+        ctx.lineTo(rx+dx*0.4, ry);
+        ctx.lineTo(rx+dx, ry+dy/2);
+        ctx.stroke();
+      }
+    }
+    if(b.hitFlash>0){
+      ctx.fillStyle = `rgba(255,255,255,${b.hitFlash*0.5})`;
       ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     }
     ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
@@ -1278,42 +1348,42 @@
     const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
     ctx.lineCap='round';
     // 車輪
-    [ax-26, ax+26].forEach(wx=>{
-      ctx.beginPath(); ctx.fillStyle='#2a1c10'; ctx.arc(wx, baseY+6, 12, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.fillStyle='#4a3320'; ctx.arc(wx, baseY+6, 8, 0, Math.PI*2); ctx.fill();
+    [ax-21, ax+21].forEach(wx=>{
+      ctx.beginPath(); ctx.fillStyle='#2a1c10'; ctx.arc(wx, baseY+6, 10, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.fillStyle='#4a3320'; ctx.arc(wx, baseY+6, 7, 0, Math.PI*2); ctx.fill();
       ctx.strokeStyle='#1a1008'; ctx.lineWidth=2;
       for(let sp=0; sp<4; sp++){
         const a=sp*Math.PI/2;
-        ctx.beginPath(); ctx.moveTo(wx,baseY+6); ctx.lineTo(wx+Math.cos(a)*8, baseY+6+Math.sin(a)*8); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(wx,baseY+6); ctx.lineTo(wx+Math.cos(a)*7, baseY+6+Math.sin(a)*7); ctx.stroke();
       }
     });
     // 脚（太め・二重トーン）
-    ctx.strokeStyle = '#503a22'; ctx.lineWidth=10;
-    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.strokeStyle = '#8a6438'; ctx.lineWidth=4;
-    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = '#503a22'; ctx.lineWidth=9;
+    ctx.beginPath(); ctx.moveTo(ax-24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = '#8a6438'; ctx.lineWidth=3.5;
+    ctx.beginPath(); ctx.moveTo(ax-24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
     // 横木の補強
-    ctx.strokeStyle = '#6b4a28'; ctx.lineWidth=6;
-    ctx.beginPath(); ctx.moveTo(ax-22,baseY-18); ctx.lineTo(ax+22,baseY-18); ctx.stroke();
+    ctx.strokeStyle = '#6b4a28'; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(ax-18,baseY-15); ctx.lineTo(ax+18,baseY-15); ctx.stroke();
     // 支柱の金具
-    ctx.beginPath(); ctx.fillStyle='#3a2a18'; ctx.ellipse(ax,baseY+2,18,9,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.fillStyle='#3a2a18'; ctx.ellipse(ax,baseY+2,15,7,0,0,Math.PI*2); ctx.fill();
     // アーム（アンカーへ向かう斜めの腕）とロープ
-    ctx.strokeStyle = '#3a2a18'; ctx.lineWidth=5;
-    ctx.beginPath(); ctx.moveTo(ax-8,baseY-14); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = '#3a2a18'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(ax-6,baseY-12); ctx.lineTo(ax,ay); ctx.stroke();
     ctx.strokeStyle = 'rgba(200,170,120,0.7)'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(ax-22,baseY-18); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+22,baseY-18); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax-18,baseY-15); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+18,baseY-15); ctx.lineTo(ax,ay); ctx.stroke();
     ctx.setLineDash([]);
     // カップ（モンスターを乗せる受け皿）
-    ctx.beginPath(); ctx.fillStyle='#5a3f24'; ctx.arc(ax,ay+4,16,0,Math.PI,false); ctx.fill();
+    ctx.beginPath(); ctx.fillStyle='#5a3f24'; ctx.arc(ax,ay+4,13,0,Math.PI,false); ctx.fill();
     ctx.strokeStyle='#2a1c10'; ctx.lineWidth=2; ctx.stroke();
 
     if(dragging && current && dragPoint){
       ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
-      ctx.beginPath(); ctx.moveTo(ax-30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(ax+30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax-24,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax+24,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
       ctx.setLineDash([]);
       const dx=ANCHOR.x-dragPoint.x, dy=ANCHOR.y-dragPoint.y;
       if(trajectoryHint){
@@ -1342,20 +1412,21 @@
 
     blocks.forEach(b=> drawRectBody(b, b.isCrenel ? '#6b5546' : '#5a4536'));
 
-    // 旗（塔の最上段ブロックに追従して描く。ブロックが崩れると一緒に傾く）
+    // 旗（塔の最上段パーツに追従して描く。パーツが崩れると一緒に傾く）
     if(castleDecor && castleDecor.flags){
       castleDecor.flags.forEach(fb=>{
         if(!fb || !blocks.includes(fb)) return;
+        const halfH = (fb.blockH||TOWER_CHUNK_H)/2;
         ctx.save();
         ctx.translate(fb.position.x, fb.position.y);
         ctx.rotate(fb.angle);
         ctx.strokeStyle = '#3a2a1a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(0,-BLOCK_H/2); ctx.lineTo(0,-BLOCK_H/2-20); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0,-halfH); ctx.lineTo(0,-halfH-20); ctx.stroke();
         ctx.fillStyle = '#e2483a';
         ctx.beginPath();
-        ctx.moveTo(0,-BLOCK_H/2-20);
-        ctx.lineTo(16,-BLOCK_H/2-16);
-        ctx.lineTo(0,-BLOCK_H/2-11);
+        ctx.moveTo(0,-halfH-20);
+        ctx.lineTo(16,-halfH-16);
+        ctx.lineTo(0,-halfH-11);
         ctx.closePath(); ctx.fill();
         ctx.restore();
       });
@@ -1512,6 +1583,11 @@
 
   // ---------- 起動 ----------
   preloadImages();
+  // 対応端末（主にAndroid・PWAインストール後など）ではネイティブAPIでの横向き固定も試みる。
+  // 未対応環境（iOS Safari等）では失敗するが、その場合はCSSの回転処理で代替する。
+  if(screen.orientation && screen.orientation.lock){
+    screen.orientation.lock('landscape').catch(()=>{ /* 未対応環境ではCSS側の回転で代替 */ });
+  }
   el('overlayPrimaryBtn'); // no-op ref warm-up
   refreshTopbar();
   refreshMissionDot();

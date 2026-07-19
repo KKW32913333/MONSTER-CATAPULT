@@ -45,6 +45,21 @@ html,body{
   padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
   isolation:isolate;
 }
+
+/* ---------- 横画面固定（スマホで縦持ちの場合、画面ごと90度回転させて横向き表示にする） ----------
+   iOS Safariは画面回転を固定するネイティブAPIに対応していないため、CSSで疑似的に固定する。
+   スマホ幅（926px以下）で縦持ちの場合のみ発動し、タブレット・PCでは通常表示のまま。 */
+@media screen and (orientation:portrait) and (max-width:926px){
+  html{ overflow:hidden; }
+  body{
+    position:fixed; top:0; left:0;
+    width:100vh; height:100vw;
+    transform-origin:top left;
+    transform:rotate(90deg) translateY(-100%);
+    overflow:hidden;
+  }
+  #app{ max-width:600px; width:100%; margin:0 auto; }
+}
 /* オーロラ風の背景ブロブ（すべての画面の裏に固定） */
 #app::before{
   content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
@@ -73,6 +88,13 @@ html,body{
   background:var(--gold); border:2px solid var(--ink);
 }
 .currency .val{ font-family:var(--font); font-size:14px; color:var(--cloud); font-weight:800; }
+.sound-toggle{
+  width:34px; height:34px; border-radius:50%; flex:0 0 auto; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:15px;
+  background:var(--surface); border:2px solid var(--ink); box-shadow:0 3px 0 var(--ink);
+}
+.sound-toggle:active{ transform:translateY(2px); box-shadow:none; }
+.sound-toggle.muted{ opacity:.55; }
 
 /* ---------- トップ画面（スプラッシュ） ---------- */
 #screen-splash{
@@ -115,13 +137,23 @@ html,body{
   box-shadow:0 5px 0 var(--ink);
   overflow:hidden; padding:16px 0;
 }
+.world-switch{
+  position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:3;
+  display:flex; align-items:center; gap:8px;
+}
+.world-arrow{
+  width:26px; height:26px; border-radius:50%; flex:0 0 auto; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800;
+  background:var(--surface-2); color:var(--cloud); border:2px solid var(--ink);
+  box-shadow:0 2px 0 var(--ink);
+}
+.world-arrow:active{ transform:translateY(2px); box-shadow:none; }
+.world-arrow.disabled{ opacity:.3; pointer-events:none; }
 .world-label{
-  position:absolute; top:14px; left:50%; transform:translateX(-50%) rotate(-2deg); z-index:3;
   font-size:12px; font-weight:800; letter-spacing:.03em; color:var(--ink);
-  background:var(--gold); padding:6px 20px; border-radius:20px;
+  background:var(--gold); padding:6px 18px; border-radius:20px; white-space:nowrap;
   box-shadow:0 3px 0 var(--ink); border:2px solid var(--ink);
 }
-.world-label::before, .world-label::after{ content:none; }
 .map-path{ position:absolute; inset:0; }
 .stage-node{
   position:absolute; width:56px; height:56px; margin-left:-28px; margin-top:-28px;
@@ -344,14 +376,21 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
   <!-- ===================== 共通トップバー ===================== -->
   <div class="topbar hidden" id="topbar">
     <div class="logo">🎯 <b>MONSTER</b> CATAPULT</div>
-    <div class="currency"><span class="coin"></span><span class="val" id="goldTop">0</span></div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div class="sound-toggle" id="soundToggleBtn">🔊</div>
+      <div class="currency"><span class="coin"></span><span class="val" id="goldTop">0</span></div>
+    </div>
   </div>
 
   <!-- ===================== ステージ（ワールドマップ） ===================== -->
   <section id="screen-map" class="screen">
     <div class="screen-title">ステージ選択<div class="bar"></div></div>
     <div id="mapScroll">
-      <div class="world-label">WORLD 1・火山の丘</div>
+      <div class="world-switch">
+        <div class="world-arrow" id="worldPrevBtn">◀</div>
+        <div class="world-label"><span id="worldLabelText">WORLD 1・火山の丘</span></div>
+        <div class="world-arrow" id="worldNextBtn">▶</div>
+      </div>
       <div class="map-path" id="mapPath"></div>
     </div>
   </section>
@@ -425,7 +464,7 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
     <div class="overlay-box">
       <h2 id="overlayTitle"></h2>
       <div class="result-stars" id="overlayStars"></div>
-      <div class="stat-line">
+      <div class="stat-line" id="overlayStatLine">
         <div><span class="label">獲得スコア</span><span class="value" id="overlayScore">0</span></div>
         <div><span class="label">獲得ゴールド</span><span class="value" id="overlayGold">0</span></div>
       </div>
@@ -505,9 +544,21 @@ service cloud.firestore{
   };
 
   // ---------- 定数 ----------
-  const TOTAL_STAGES = 10;
+  const WORLDS = [
+    { id:1, name:'草原の丘', theme:'meadow' },
+    { id:2, name:'氷結の山脈', theme:'snow' },
+  ];
+  const STAGES_PER_WORLD = 10;
+  const TOTAL_STAGES = WORLDS.length * STAGES_PER_WORLD;
   const LEVEL_MAX = 5;
   const BASE_THRESHOLD = 2.3;
+
+  function worldForStage(n){ return Math.ceil(n / STAGES_PER_WORLD); }
+  function localStageInfo(n){
+    const worldIndex = worldForStage(n);
+    const localN = ((n-1) % STAGES_PER_WORLD) + 1;
+    return { worldIndex, localN };
+  }
 
   const MONSTER_DEFS = {
     slime:    {name:'スライム',        emoji:'🟢', color:'#7bd66b', special:'split',   specialText:'着弾すると3体に分裂し、周囲へ被害を広げる',
@@ -553,11 +604,17 @@ service cloud.firestore{
     },
     // 砦ブロックのテクスチャ：背景と同じテーマ区分で切り替わります
     blocks: {
-      meadow:  'block-meadow.jpg',
-      forest:  'block-forest.jpg',
-      cave:    'block-cave.jpg',
-      snow:    'block-snow.jpg',
-      volcano: 'block-volcano.jpg',
+      meadow:  'block-stone.jpg',
+      forest:  'block-stone.jpg',
+      cave:    'block-stone.jpg',
+      snow:    'block-stone.jpg',
+      volcano: 'block-stone.jpg',
+    },
+    // 城パーツ専用の立体イラスト（塔・城壁・キープ）。未設定ならblocksのテクスチャにフォールバック
+    castle: {
+      tower: 'castle-tower.png',
+      wall:  'castle-wall.png',
+      keep:  'castle-keep.png',
     },
     enemy: null,         // 敵アイコン（推奨: 64x64, png/透過）
     monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 240x240, png/透過）
@@ -566,13 +623,10 @@ service cloud.firestore{
     },
   };
   function stageBackgroundKey(stageN){
-    if(isBossStage(stageN)) return 'volcano';
-    if(stageN <= 2) return 'meadow';
-    if(stageN <= 4) return 'forest';
-    if(stageN <= 7) return 'cave';
-    return 'snow';
+    const { worldIndex } = localStageInfo(stageN);
+    return (WORLDS[worldIndex-1] && WORLDS[worldIndex-1].theme) || 'meadow';
   }
-  const loadedImages = { monsters:{}, backgrounds:{}, blocks:{} };
+  const loadedImages = { monsters:{}, backgrounds:{}, blocks:{}, castle:{} };
   function preloadImages(){
     const tryLoad = (key, path, target)=>{
       if(!path) return;
@@ -583,6 +637,7 @@ service cloud.firestore{
     };
     Object.keys(IMAGE_ASSETS.backgrounds).forEach(k=> tryLoad(k, IMAGE_ASSETS.backgrounds[k], loadedImages.backgrounds));
     Object.keys(IMAGE_ASSETS.blocks).forEach(k=> tryLoad(k, IMAGE_ASSETS.blocks[k], loadedImages.blocks));
+    Object.keys(IMAGE_ASSETS.castle).forEach(k=> tryLoad(k, IMAGE_ASSETS.castle[k], loadedImages.castle));
     tryLoad('enemy', IMAGE_ASSETS.enemy, loadedImages);
     MONSTER_ORDER.forEach(k=> tryLoad(k, IMAGE_ASSETS.monsters[k], loadedImages.monsters));
   }
@@ -592,14 +647,15 @@ service cloud.firestore{
     return path ? `background-image:url('${path}'); background-size:145%; background-position:center;` : '';
   }
 
-  const ANCHOR = {x:66, y:300};
+  const ANCHOR = {x:54, y:296};
   const GROUND_Y = 392;
   const MAX_PULL = 78;
   const LAUNCH_SCALE = 0.17;
   const TURN_DURATION = 3400;
   const W = 390, H = 460;
-  const BLOCK_W = 34, BLOCK_H = 34, BLOCK_GAP = 4;
+  const BLOCK_W = 30, BLOCK_H = 30, BLOCK_GAP = 4;
   const FORT_RIGHT_EDGE = W - 46;
+  const CHUNK_W = 44, TOWER_CHUNK_H = 56, CHUNK_GAP = 3, WALL_H = 46;
 
   // ---------- プレイヤー永続状態 ----------
   function defaultState(){
@@ -607,7 +663,7 @@ service cloud.firestore{
     MONSTER_ORDER.forEach(k=>{
       monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault ? 1 : 0 };
     });
-    return { gold: 300, monsters, stages: {}, totalScore: 0 };
+    return { gold: 300, monsters, stages: {}, totalScore: 0, sfxOn: true };
   }
   let state = Object.assign(defaultState(), Storage.get('mc_state', {}));
   // 深いマージ漏れ対策（旧セーブに新モンスターが無い場合を補完）
@@ -676,7 +732,19 @@ service cloud.firestore{
   const overlayScoreEl = el('overlayScore'), overlayGoldEl = el('overlayGold'), overlayTextEl = el('overlayText');
   const overlayPrimaryEl = el('overlayPrimaryBtn'), overlaySecondaryEl = el('overlaySecondaryBtn');
 
-  function refreshTopbar(){ goldTopEl.textContent = state.gold; }
+  function refreshTopbar(){
+    goldTopEl.textContent = state.gold;
+    const btn = el('soundToggleBtn');
+    if(btn){
+      btn.textContent = state.sfxOn !== false ? '🔊' : '🔇';
+      btn.classList.toggle('muted', state.sfxOn === false);
+    }
+  }
+  el('soundToggleBtn').addEventListener('click', ()=>{
+    state.sfxOn = state.sfxOn === false ? true : false;
+    saveState(); refreshTopbar();
+    if(state.sfxOn) SFX.click();
+  });
 
   function showScreen(name){
     Object.keys(screens).forEach(k=> screens[k].classList.toggle('hidden', k!==name));
@@ -684,7 +752,7 @@ service cloud.firestore{
     topbar.classList.toggle('hidden', chromeless);
     bottomNav.classList.toggle('hidden', chromeless);
     document.querySelectorAll('.nav-item').forEach(n=> n.classList.toggle('active', n.dataset.nav===name));
-    if(name==='map') renderMap();
+    if(name==='map'){ mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
     if(name==='monsters') renderMonsters();
     if(name==='shop') renderShop();
     if(name==='missions') renderMissions();
@@ -693,9 +761,15 @@ service cloud.firestore{
     refreshTopbar();
   }
   document.querySelectorAll('.nav-item').forEach(item=>{
-    item.addEventListener('click', ()=> showScreen(item.dataset.nav));
+    item.addEventListener('click', ()=>{ SFX.click(); showScreen(item.dataset.nav); });
   });
-  el('splashPlayBtn').addEventListener('click', ()=> showScreen('map'));
+  el('splashPlayBtn').addEventListener('click', ()=>{ SFX.unlock(); showScreen('map'); });
+  el('worldPrevBtn').addEventListener('click', ()=>{
+    if(mapWorldView>1){ mapWorldView--; renderMap(); }
+  });
+  el('worldNextBtn').addEventListener('click', ()=>{
+    if(mapWorldView<WORLDS.length){ mapWorldView++; renderMap(); }
+  });
   (function setSplashIcon(){
     const img = new Image();
     img.onload = ()=>{ el('splashIcon').style.backgroundImage = `url('icon-192.png')`; el('splashIcon').textContent=''; };
@@ -704,6 +778,7 @@ service cloud.firestore{
   })();
 
   // ---------- ワールドマップ ----------
+  let mapWorldView = 1;
   function unlockedUpTo(){
     let n = 1;
     while(n < TOTAL_STAGES && state.stages[n] && state.stages[n].cleared) n++;
@@ -714,10 +789,17 @@ service cloud.firestore{
     wrap.style.position = 'relative';
     const pathEl = el('mapPath');
     const unlocked = unlockedUpTo();
+    mapWorldView = Math.min(Math.max(mapWorldView, 1), WORLDS.length);
+    const world = WORLDS[mapWorldView-1];
+    el('worldLabelText').textContent = `WORLD ${world.id}・${world.name}`;
+    el('worldPrevBtn').classList.toggle('disabled', mapWorldView<=1);
+    el('worldNextBtn').classList.toggle('disabled', mapWorldView>=WORLDS.length);
+
     const pts = [];
     let html = '';
-    for(let i=0;i<TOTAL_STAGES;i++){
-      const n = i+1;
+    for(let i=0;i<STAGES_PER_WORLD;i++){
+      const n = (mapWorldView-1)*STAGES_PER_WORLD + i + 1;
+      const local = i+1;
       const topPct = 90 - i*7.6;
       const xPct = 50 + Math.sin(i*1.15)*28;
       pts.push([xPct, topPct]);
@@ -728,8 +810,8 @@ service cloud.firestore{
       const starStr = '★★★'.slice(0,stars) + '☆☆☆'.slice(0, 3-stars);
       html += `<div class="stage-node ${locked?'locked':''} ${current?'current':''}" data-stage="${n}"
                  style="left:${xPct}%; top:${topPct}%;">
-                 ${n%5===0?'<div class="boss-badge">BOSS</div>':''}
-                 ${locked ? '<div class="lock-icon">🔒</div>' : `<div class="num">${n}</div><div class="stars">${starStr}</div>`}
+                 ${local%5===0?'<div class="boss-badge">BOSS</div>':''}
+                 ${locked ? '<div class="lock-icon">🔒</div>' : `<div class="num">${local}</div><div class="stars">${starStr}</div>`}
                </div>`;
     }
     const svgPoints = pts.map(p=>p[0]+','+p[1]).join(' ');
@@ -794,6 +876,7 @@ service cloud.firestore{
         state.monsters[key].owned = true;
         state.monsters[key].level = 1;
         saveState(); renderShop(); refreshTopbar();
+        SFX.buy();
       });
     });
     wrap.querySelectorAll('[data-levelup]').forEach(btn=>{
@@ -804,6 +887,7 @@ service cloud.firestore{
         state.gold -= cost;
         state.monsters[key].level = Math.min(LEVEL_MAX, (state.monsters[key].level||1) + 1);
         saveState(); renderShop(); refreshTopbar();
+        SFX.buy();
       });
     });
   }
@@ -836,6 +920,7 @@ service cloud.firestore{
         state.gold += def.reward;
         saveState(); Storage.set('mc_missions', missionState);
         refreshTopbar(); refreshMissionDot(); renderMissions();
+        SFX.buy();
       });
     });
     refreshMissionDot();
@@ -867,6 +952,61 @@ service cloud.firestore{
   //  ゲーム本体（物理演算パート）
   // ==========================================================
   const { Engine, World, Bodies, Body, Composite, Events, Vector } = Matter;
+  // ---------- 効果音（Web Audio APIでコード生成、追加ファイル不要） ----------
+  const SFX = (function(){
+    let ctx = null;
+    function getCtx(){
+      if(!ctx){
+        try{ ctx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; }
+      }
+      if(ctx && ctx.state==='suspended') ctx.resume().catch(()=>{});
+      return ctx;
+    }
+    function isOn(){ return state.sfxOn !== false; }
+    function tone(freq, duration, type, startGain, freqEnd){
+      if(!isOn()) return;
+      const c = getCtx(); if(!c) return;
+      const osc = c.createOscillator(), gain = c.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.setValueAtTime(freq, c.currentTime);
+      if(freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(freqEnd,1), c.currentTime+duration);
+      gain.gain.setValueAtTime(startGain||0.15, c.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime+duration);
+      osc.connect(gain); gain.connect(c.destination);
+      osc.start(); osc.stop(c.currentTime+duration);
+    }
+    function noiseBurst(duration, startGain, filterFreq){
+      if(!isOn()) return;
+      const c = getCtx(); if(!c) return;
+      const n = Math.floor(c.sampleRate*duration);
+      const buffer = c.createBuffer(1, n, c.sampleRate);
+      const data = buffer.getChannelData(0);
+      for(let i=0;i<n;i++) data[i] = (Math.random()*2-1) * Math.pow(1-i/n, 2);
+      const src = c.createBufferSource(); src.buffer = buffer;
+      const filter = c.createBiquadFilter(); filter.type='lowpass'; filter.frequency.value = filterFreq||800;
+      const gain = c.createGain();
+      gain.gain.setValueAtTime(startGain||0.3, c.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime+duration);
+      src.connect(filter); filter.connect(gain); gain.connect(c.destination);
+      src.start(); src.stop(c.currentTime+duration);
+    }
+    return {
+      unlock(){ getCtx(); },
+      launch(){ tone(180,0.22,'sawtooth',0.10,420); },
+      hit(){ tone(320,0.08,'square',0.12,120); },
+      kill(){ tone(660,0.12,'triangle',0.15,880); },
+      bossKill(){ tone(220,0.5,'sawtooth',0.18,660); setTimeout(()=>tone(440,0.4,'triangle',0.16,880),120); },
+      explosion(){ noiseBurst(0.4,0.32,500); tone(90,0.35,'sine',0.18,40); },
+      split(){ tone(520,0.1,'sine',0.12,760); },
+      freeze(){ tone(900,0.2,'sine',0.09,1400); },
+      barrel(){ noiseBurst(0.3,0.28,700); },
+      clear(){ [523,659,784,1046].forEach((f,i)=> setTimeout(()=> tone(f,0.25,'triangle',0.14), i*90)); },
+      fail(){ tone(220,0.5,'sawtooth',0.14,90); },
+      click(){ tone(700,0.05,'sine',0.07); },
+      buy(){ tone(880,0.09,'sine',0.1,1200); },
+    };
+  })();
+
   const canvas = el('game');
   const ctx = canvas.getContext('2d');
   // 高解像度端末（Retina等）対応：内部の描画バッファをdevicePixelRatio倍に拡大し、
@@ -880,7 +1020,7 @@ service cloud.firestore{
   })();
 
   let engine, world;
-  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [];
+  let blocks = [], enemiesArr = [], fragments = [], freezeTimers = [], barrels = [], crystals = [];
   let current = null;
   let ammoQueue = [], queueIndex = 0;
   let stageScore = 0, currentStage = 1, totalEnemiesThisStage = 0;
@@ -891,6 +1031,7 @@ service cloud.firestore{
   let toRemove = [], particles = [], explosions = [];
   let gameClock = 0;
   let killsThisTurn = 0;
+  let comboCount = 0;
   let shakeAmount = 0;
   let trailPoints = [];
   let debris = [];
@@ -907,20 +1048,26 @@ service cloud.firestore{
     }
   }
 
-  function isBossStage(n){ return n % 5 === 0; }
-  function bossHpForStage(n){ return n >= 10 ? 7 : 4; }
+  function isBossStage(n){ return localStageInfo(n).localN % 5 === 0; }
+  function bossHpForStage(n){
+    const { worldIndex, localN } = localStageInfo(n);
+    const base = localN >= 10 ? 7 : 4;
+    return base + (worldIndex-1)*2;
+  }
 
   function stageParams(n){
-    const capped = Math.min(n, 4);
-    const boss = isBossStage(n);
+    const { worldIndex, localN } = localStageInfo(n);
+    const worldBonus = worldIndex - 1; // ワールドが進むごとに難易度の底上げ
+    const capped = Math.min(localN, 4) + worldBonus;
+    const boss = localN % 5 === 0;
     return {
       rows: 2+capped + (boss?1:0),
-      baseCount: 3+capped + (boss?1:0),
-      enemyHp: n>=7 ? 2 : 1,
-      ammoLen: Math.max(3, 4+Math.min(n,5)) + (boss?2:0),
-      threshBonus: Math.min(n,10)*0.035,
+      baseCount: Math.min(3+capped + (boss?1:0), 5), // 城壁がカタパルト側までせり出さないよう上限
+      enemyHp: (localN>=7 ? 2 : 1) + worldBonus,
+      ammoLen: Math.max(4, 5+Math.min(localN,5)) + (boss?3:0) + worldBonus,
+      threshBonus: Math.min(localN,10)*0.035 + worldBonus*0.05,
       isBoss: boss,
-      barrelCount: n<3 ? 0 : (boss ? 2 : 1),
+      barrelCount: (localN<3 ? 0 : (boss ? 2 : 1)) + Math.min(worldBonus,1),
     };
   }
   function rowBlocksX(count){
@@ -931,84 +1078,103 @@ service cloud.firestore{
 
   function buildFortress(sp, stageN){
     castleDecor = { flags: [] };
-    const baseY = GROUND_Y - BLOCK_H/2 - 2;
-    const wallCount = sp.baseCount;             // 城壁の横幅（ブロック数）
-    const wallRows = 2;                          // 城壁の厚み（段数）
-    const towerRows = Math.min(sp.rows, 4);       // 塔が城壁の上にさらに積む段数（画面上部にはみ出さないよう上限あり）
-    const xs = rowBlocksX(wallCount);
-    const leftX = Math.min.apply(null, xs);
-    const rightX = Math.max.apply(null, xs);
+    const baseY = GROUND_Y - TOWER_CHUNK_H/2 - 2;
+    const rightX = FORT_RIGHT_EDGE;
+    const leftX = rightX - (sp.baseCount-1)*38;
+    const towerChunkCount = Math.min(4, 2 + Math.floor((sp.rows-3)/2));
+    const chunkHp = Math.min(4, 2 + Math.floor(sp.rows/4));
 
-    // ① 城壁（横方向に2段）
-    for(let r=0; r<wallRows; r++){
-      const y = baseY - r*(BLOCK_H+BLOCK_GAP);
-      xs.forEach(x=> addBlock(x,y,BLOCK_W,BLOCK_H));
-    }
-    const wallTopY = baseY - (wallRows-1)*(BLOCK_H+BLOCK_GAP);
-
-    // ② 城壁の上の胸壁（凹凸）。1つおきに小さいブロックを乗せる（隙間には敵を立たせる）
-    for(let i=0;i<xs.length;i+=2){
-      addBlock(xs[i], wallTopY-(BLOCK_H+BLOCK_GAP)/2-7, 16, 14, true);
-    }
-
-    // ③ 両端の塔（城壁より高く積み上げる）
-    function buildTower(x, extraRows){
-      let topBlock = null;
-      for(let r=wallRows; r<wallRows+extraRows; r++){
-        const y = baseY - r*(BLOCK_H+BLOCK_GAP);
-        topBlock = addBlock(x,y,BLOCK_W,BLOCK_H);
+    // 塔（複数の大きなパーツを積んで構成。各パーツが個別に耐久力を持つ）
+    function buildTower(x, count, hpBonus, type){
+      let topBlock = null, lastCenterY = 0;
+      for(let i=0;i<count;i++){
+        const y = baseY - i*(TOWER_CHUNK_H+CHUNK_GAP);
+        topBlock = addBlock(x, y, CHUNK_W, TOWER_CHUNK_H, chunkHp+hpBonus, false, type);
+        lastCenterY = y;
       }
-      const topY = baseY - (wallRows+extraRows-1)*(BLOCK_H+BLOCK_GAP);
-      return {topBlock, topY};
+      return { topBlock, topEdgeY: lastCenterY - TOWER_CHUNK_H/2 };
     }
-    const leftTower = buildTower(leftX, towerRows);
-    const rightTower = buildTower(rightX, towerRows);
-    castleDecor.flags.push(leftTower.topBlock, rightTower.topBlock);
-    castleDecor.gate = {x:(leftX+rightX)/2, y:baseY+BLOCK_H/2+2};
 
-    // ④ ボスステージ：中央にひときわ高い主塔（キープ）
+    const leftTower = buildTower(leftX, towerChunkCount, 0, 'tower');
+    const rightTower = buildTower(rightX, towerChunkCount, 0, 'tower');
+    castleDecor.flags.push(leftTower.topBlock, rightTower.topBlock);
+    castleDecor.gate = { x:(leftX+rightX)/2, y:baseY+TOWER_CHUNK_H/2+2 };
+
+    // 城壁（塔と塔をつなぐ大きな一枚。これも壊れる）
+    const wallX = (leftX+rightX)/2;
+    const wallWidth = Math.max(30, (rightX-leftX) - CHUNK_W - 14);
+    const wallY = baseY + (TOWER_CHUNK_H-WALL_H)/2;
+    addBlock(wallX, wallY, wallWidth, WALL_H, chunkHp, false, 'wall');
+    // 城壁上の小さな胸壁（1発で壊れる装飾。塔の付け根寄りに配置し敵と重ならないようにする）
+    addBlock(wallX-wallWidth*0.42, wallY-WALL_H/2-9, 14,14, 1, true);
+    addBlock(wallX+wallWidth*0.42, wallY-WALL_H/2-9, 14,14, 1, true);
+
+    // ボスステージ：中央にひときわ高いキープ（主塔）
     let keep = null, keepX = null;
     if(sp.isBoss){
-      keepX = (leftX+rightX)/2;
-      keep = buildTower(keepX, Math.min(towerRows+1, 5));
+      keepX = wallX;
+      keep = buildTower(keepX, Math.min(towerChunkCount+1, 4), 1, 'keep');
       castleDecor.flags.push(keep.topBlock);
     }
 
-    // ---------- 敵配置（すべて構造物の"上"、隣接ブロックと重ならない位置） ----------
+    // ---------- 敵配置 ----------
     if(sp.isBoss){
-      addBoss(keepX, keep.topY-BLOCK_H/2-26, bossHpForStage(stageN));
-      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
-      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
-    } else {
-      addEnemy(leftX, leftTower.topY-BLOCK_H/2-16, sp.enemyHp);
-      addEnemy(rightX, rightTower.topY-BLOCK_H/2-16, sp.enemyHp);
+      addBoss(keepX, keep.topEdgeY-26, bossHpForStage(stageN));
     }
-    // 城壁の上（胸壁の隙間＝奇数インデックス）に立つ雑魚。
-    // 両端の塔・中央キープの柱が通る位置（leftX/rightX/keepX付近）は必ず除外する。
-    const excludeXs = [leftX, rightX];
-    if(sp.isBoss) excludeXs.push(keepX);
-    const wallEnemyCount = Math.max(1, Math.min(4, sp.rows-1));
-    const oddSlots = [];
-    for(let i=1;i<xs.length;i+=2){
-      const tooClose = excludeXs.some(ex=> Math.abs(xs[i]-ex) < BLOCK_W);
-      if(!tooClose) oddSlots.push(xs[i]);
-    }
-    for(let i=0;i<wallEnemyCount && i<oddSlots.length;i++){
-      const idx = Math.floor(i*(oddSlots.length/wallEnemyCount));
-      addEnemy(oddSlots[idx], wallTopY-BLOCK_H/2-15, sp.enemyHp);
+    addEnemy(leftX, leftTower.topEdgeY-16, sp.enemyHp);
+    addEnemy(rightX, rightTower.topEdgeY-16, sp.enemyHp);
+
+    if(!sp.isBoss){
+      const wallEnemyCount = Math.max(1, Math.min(2, Math.floor(sp.rows/3)));
+      const wallEnemyOffsets = wallEnemyCount===1 ? [0] : [-wallWidth*0.16, wallWidth*0.16];
+      for(let i=0;i<wallEnemyCount;i++){
+        addEnemy(wallX+wallEnemyOffsets[i], wallY-WALL_H/2-15, sp.enemyHp);
+      }
     }
 
-    // 爆発樽の配置（ステージ3以降。城壁の脇の地面に設置）
-    for(let i=0;i<sp.barrelCount;i++){
-      addBarrel(leftX - BLOCK_W/2 - 30 - i*34, GROUND_Y-16);
+    // 爆発樽の配置（ステージ3以降。城壁とカタパルトの間の安全な範囲内にのみ設置）
+    const barrelSpacing = 30;
+    const barrelZoneRight = leftX - CHUNK_W/2 - 14;
+    const barrelZoneLeft = 112;
+    const maxBarrelsFit = Math.max(0, Math.floor((barrelZoneRight - barrelZoneLeft) / barrelSpacing) + 1);
+    const actualBarrelCount = Math.min(sp.barrelCount, maxBarrelsFit);
+    for(let i=0;i<actualBarrelCount;i++){
+      addBarrel(barrelZoneRight - i*barrelSpacing, GROUND_Y-16);
     }
+
+    // 隠しクリスタル：砦の右側の空き地に常設
+    addCrystal(374, GROUND_Y-11);
   }
 
-  function addBlock(x,y,w,h,isCrenel){
-    const b = Bodies.rectangle(x,y,w,h,{density:isCrenel?0.0008:0.0015, friction:0.6, restitution:0.05, label:'block'});
-    b.blockW=w; b.blockH=h; b.isCrenel=!!isCrenel;
+  function addBlock(x,y,w,h,hp,isCrenel,chunkType){
+    const b = Bodies.rectangle(x,y,w,h,{density:isCrenel?0.0008:0.0022, friction:0.6, restitution:0.05, label:'block'});
+    b.blockW=w; b.blockH=h; b.isCrenel=!!isCrenel; b.chunkType=chunkType||null;
+    b.hp = hp||1; b.maxHp = hp||1; b.hitFlash=0;
     blocks.push(b); World.add(world,b);
     return b;
+  }
+  function damageChunk(body){
+    body.hp -= 1;
+    if(body.hp <= 0){
+      destroyChunk(body);
+    } else {
+      body.hitFlash = 1.0;
+      spawnDebris(body.position.x, body.position.y, '#8a7263', 4);
+      triggerShake(3);
+      SFX.hit();
+    }
+  }
+  function destroyChunk(body){
+    const idx = blocks.indexOf(body);
+    if(idx>=0) blocks.splice(idx,1);
+    toRemove.push(body);
+    const points = body.isCrenel ? 30 : 80;
+    stageScore += points;
+    pushParticle(body.position.x, body.position.y, (body.isCrenel?'+':'崩壊! +')+points, '#ffb057');
+    spawnDebris(body.position.x, body.position.y, '#8a7263', body.isCrenel?7:18);
+    triggerShake(body.isCrenel?4:11);
+    SFX.barrel();
+    updateHUD();
   }
   function addEnemy(x,y,hp){
     const e = Bodies.circle(x,y,12,{density:0.002, friction:0.5, restitution:0.15, label:'enemy', frictionAir:0.01});
@@ -1025,12 +1191,24 @@ service cloud.firestore{
     b.exploded=false;
     barrels.push(b); World.add(world,b);
   }
+  function addCrystal(x,y){
+    const c = Bodies.circle(x,y,9,{density:0.0009, friction:0.4, restitution:0.5, label:'crystal'});
+    c.collected=false;
+    crystals.push(c); World.add(world,c);
+  }
 
   function buildAmmoQueue(n){
     const sp = stageParams(n);
     const pool = MONSTER_ORDER.filter(k=> state.monsters[k].owned);
     const queue = [];
     for(let i=0;i<sp.ammoLen;i++) queue.push(pool[Math.floor(Math.random()*pool.length)]);
+    // ボスステージは爆発（ドラゴン）を最低2体保証し、爆発系が一切引けず詰む事故を防ぐ
+    if(sp.isBoss && pool.includes('dragon')){
+      let dragonCount = queue.filter(k=>k==='dragon').length;
+      for(let i=0; i<queue.length && dragonCount<2; i++){
+        if(queue[i] !== 'dragon'){ queue[i] = 'dragon'; dragonCount++; }
+      }
+    }
     return queue;
   }
 
@@ -1039,14 +1217,20 @@ service cloud.firestore{
     engine = Engine.create();
     engine.gravity.y = 1;
     world = engine.world;
-    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[]; castleDecor=null;
+    blocks=[]; enemiesArr=[]; fragments=[]; freezeTimers=[]; barrels=[]; crystals=[]; castleDecor=null;
     toRemove=[]; particles=[]; explosions=[]; debris=[]; trailPoints=[]; shakeAmount=0;
-    gameClock=0; killsThisTurn=0; stageScore=0; stageOver=false;
-    dragging=false; dragPoint=null; speedMul=1; el('speedBtn').textContent='x1';
+    gameClock=0; killsThisTurn=0; comboCount=0; stageScore=0; stageOver=false;
+    dragging=false; dragPoint=null; speedMul=1; paused=false; el('speedBtn').textContent='x1';
     buildGroundDecor();
 
     const ground = Bodies.rectangle(W/2, GROUND_Y+15, W+40, 30, {isStatic:true, label:'ground', friction:0.9});
     World.add(world, ground);
+    // 見えない壁（左右・天井）：強い衝撃でブロックや敵が画面外へ飛んでいかないよう封じ込める
+    const wallOpts = {isStatic:true, label:'wall', friction:0.4, restitution:0.15};
+    const leftWall  = Bodies.rectangle(-15, H/2, 30, H*2, wallOpts);
+    const rightWall = Bodies.rectangle(W+15, H/2, 30, H*2, wallOpts);
+    const ceiling   = Bodies.rectangle(W/2, -15, W*2, 30, wallOpts);
+    World.add(world, [leftWall, rightWall, ceiling]);
 
     const sp = stageParams(n);
     buildFortress(sp, n);
@@ -1090,11 +1274,23 @@ service cloud.firestore{
         damageEnemy(a, 1, 'proj');
       }
     }
+    if(a.label==='block' && blocks.includes(a) && a.hp>0){
+      const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
+      const mult = levelMult(current ? current.type : null);
+      const required = (BASE_THRESHOLD*1.1) * (1 + stageParams(currentStage).threshBonus);
+      if(relSpeed*mult > required && b.label!=='ground' && b.label!=='wall'){
+        damageChunk(a);
+      }
+    }
     if(a.label==='barrel' && barrels.includes(a) && !a.exploded){
       const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
       if(relSpeed > 1.0 && b.label!=='ground'){
         explodeBarrel(a);
       }
+    }
+    if(a.label==='crystal' && crystals.includes(a) && !a.collected && b.label!=='ground'){
+      const relSpeed = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
+      if(relSpeed > 0.8) collectCrystal(a);
     }
     if(!current) return;
     if(a===current.body && a.label==='proj_slime' && !current.hasSplit && b.label!=='proj_slime'){
@@ -1117,6 +1313,7 @@ service cloud.firestore{
       pushParticle(body.position.x, body.position.y-14, body.isBoss?`HIT ${body.hp}/${body.maxHp}`:'HIT', '#ffb057');
       spawnDebris(body.position.x, body.position.y, '#ffb057', 4);
       triggerShake(3);
+      SFX.hit();
     }
   }
 
@@ -1124,17 +1321,26 @@ service cloud.firestore{
     toRemove.push(body);
     const idx = enemiesArr.indexOf(body);
     if(idx>=0) enemiesArr.splice(idx,1);
-    const points = body.isBoss ? body.maxHp*150 : 100;
+    comboCount++;
+    const comboMult = Math.min(1 + (comboCount-1)*0.5, 4);
+    const basePoints = body.isBoss ? body.maxHp*150 : 100;
+    const points = Math.round(basePoints * comboMult);
     stageScore += points;
     killsThisTurn++;
     bumpMissionTrack('anyKill', 1);
     if(current) bumpMissionTrack('type:'+current.type, 1);
     if(source==='explosion') bumpMissionTrack('explosionKill', 1);
     pushParticle(body.position.x, body.position.y, (body.isBoss?'BOSS撃破 +':'+')+points, body.isBoss?'#ffd35e':'#f0c04a');
+    if(comboCount>=2){
+      pushParticle(body.position.x, body.position.y-24, `COMBO x${comboMult.toFixed(1).replace('.0','')}!`, comboCount>=5?'#ff5c7a':'#ffd35e', true);
+    }
     spawnDebris(body.position.x, body.position.y, body.isBoss?'#c68aff':'#c9453a', body.isBoss?16:8);
     triggerShake(body.isBoss?16:6);
     if(body.isBoss){
       explosions.push({x:body.position.x, y:body.position.y, t:0});
+      SFX.bossKill();
+    } else {
+      SFX.kill();
     }
     updateHUD();
     if(enemiesArr.length===0 && !stageOver){ endStage(true); }
@@ -1160,16 +1366,39 @@ service cloud.firestore{
       const d = Vector.magnitude(Vector.sub(e.position, pos));
       if(d < KILL_RADIUS) damageEnemy(e, e.isBoss?2:e.hp, 'explosion');
     });
+    [...blocks].forEach(bl=>{
+      if(bl.hp===undefined) return;
+      const d = Vector.magnitude(Vector.sub(bl.position, pos));
+      if(d < KILL_RADIUS) damageChunk(bl);
+    });
     pushParticle(pos.x, pos.y-10, '誘爆!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
     spawnDebris(pos.x, pos.y, '#ff8a3d', 14);
     triggerShake(12);
+    SFX.barrel();
     // 連鎖：範囲内の他の樽も誘爆させる
     [...barrels].forEach(other=>{
       if(other.exploded) return;
       const d = Vector.magnitude(Vector.sub(other.position, pos));
       if(d < RADIUS) explodeBarrel(other);
     });
+  }
+
+  function collectCrystal(body){
+    body.collected = true;
+    const idx = crystals.indexOf(body);
+    if(idx>=0) crystals.splice(idx,1);
+    toRemove.push(body);
+    const goldBonus = 50 + currentStage*8;
+    const scoreBonus = 200 + currentStage*20;
+    state.gold += goldBonus;
+    stageScore += scoreBonus;
+    pushParticle(body.position.x, body.position.y-10, `💎 CRYSTAL! +${scoreBonus}pt +${goldBonus}G`, '#5fc7e0', true);
+    spawnDebris(body.position.x, body.position.y, '#8fe0ff', 18);
+    triggerShake(8);
+    SFX.buy(); SFX.freeze();
+    refreshTopbar();
+    updateHUD();
   }
 
   function splitSlime(body){
@@ -1185,6 +1414,7 @@ service cloud.firestore{
     });
     pushParticle(pos.x, pos.y-14, '分裂!', '#7bd66b');
     spawnDebris(pos.x, pos.y, '#7bd66b', 6);
+    SFX.split();
   }
 
   function explodeAt(pos){
@@ -1201,10 +1431,16 @@ service cloud.firestore{
       const d = Vector.magnitude(Vector.sub(e.position, pos));
       if(d<KILL_RADIUS) damageEnemy(e, e.isBoss?3:e.hp, 'explosion');
     });
+    [...blocks].forEach(bl=>{
+      if(bl.hp===undefined) return;
+      const d = Vector.magnitude(Vector.sub(bl.position, pos));
+      if(d<KILL_RADIUS) damageChunk(bl);
+    });
     pushParticle(pos.x, pos.y-10, '爆発!', '#ff8a3d');
     explosions.push({x:pos.x, y:pos.y, t:0});
     spawnDebris(pos.x, pos.y, '#ff8a3d', 16);
     triggerShake(14);
+    SFX.explosion();
   }
 
   function freezeAt(pos){
@@ -1214,15 +1450,16 @@ service cloud.firestore{
       if(d<RADIUS){ e.frictionAir=0.9; freezeTimers.push({body:e, until: gameClock+2200}); }
     });
     pushParticle(pos.x, pos.y-10, '凍結!', '#5fc7e0');
+    SFX.freeze();
   }
 
-  function pushParticle(x,y,text,color){ particles.push({x,y,text,color,t:0,life:800}); }
+  function pushParticle(x,y,text,color,big){ particles.push({x,y,text,color,t:0,life:big?950:800,big:!!big}); }
 
   function updateHUD(){
     el('ammoVal').textContent = Math.max(0, ammoQueue.length - queueIndex - (current && current.launched ? 1 : 0));
     el('enemyVal').textContent = enemiesArr.length + '/' + totalEnemiesThisStage;
     el('scoreVal').textContent = stageScore;
-    el('stageLabel').textContent = currentStage;
+    el('stageLabel').textContent = localStageInfo(currentStage).localN;
     const st = state.stages[currentStage];
     const stars = st ? st.stars : 0;
     el('stageStarsHud').textContent = '★★★'.slice(0,stars) + '☆☆☆'.slice(0,3-stars);
@@ -1249,6 +1486,7 @@ service cloud.firestore{
     stageOver = true;
     inGame = false;
     state.totalScore += stageScore;
+    if(cleared) SFX.clear(); else SFX.fail();
 
     if(cleared){
       const leftover = Math.max(0, ammoQueue.length - queueIndex - 1);
@@ -1267,7 +1505,17 @@ service cloud.firestore{
       overlayStarsEl.innerHTML = '<span class="'+(stars>=1?'lit':'')+'">★</span><span class="'+(stars>=2?'lit':'')+'">★</span><span class="'+(stars>=3?'lit':'')+'">★</span>';
       overlayScoreEl.textContent = stageScore;
       overlayGoldEl.textContent = goldReward;
-      overlayTextEl.textContent = currentStage>=TOTAL_STAGES ? `全${TOTAL_STAGES}ステージを制圧した！お見事！` : '砦を制圧した。次のステージへ進もう。';
+      const { worldIndex, localN } = localStageInfo(currentStage);
+      const isWorldEnd = localN === STAGES_PER_WORLD;
+      const isFinalStage = currentStage >= TOTAL_STAGES;
+      if(isFinalStage){
+        overlayTextEl.textContent = `全${WORLDS.length}ワールド・${TOTAL_STAGES}ステージを制圧した！お見事！`;
+      } else if(isWorldEnd){
+        const nextWorld = WORLDS[worldIndex]; // 0-indexed配列なのでworldIndexが次のワールド
+        overlayTextEl.textContent = `ワールド${worldIndex}「${WORLDS[worldIndex-1].name}」制覇！新たなワールド「${nextWorld.name}」が解放された！`;
+      } else {
+        overlayTextEl.textContent = '砦を制圧した。次のステージへ進もう。';
+      }
 
       if(currentStage < TOTAL_STAGES){
         overlayPrimaryEl.textContent = '▶ 次のステージへ';
@@ -1302,10 +1550,33 @@ service cloud.firestore{
   }
   function closeOverlay(){ overlayEl.classList.add('hidden'); }
 
+  let paused = false;
   el('pauseBtn').addEventListener('click', ()=>{
-    inGame = false;
-    if(engine) Events.off(engine, 'collisionStart', onCollisionStart);
-    showScreen('map');
+    if(!inGame || stageOver || paused) return;
+    paused = true;
+    SFX.click();
+    el('overlayStatLine').classList.add('hidden');
+    overlayTitleEl.textContent = '一時中断';
+    overlayTitleEl.className = '';
+    overlayStarsEl.innerHTML = '';
+    overlayTextEl.textContent = 'ステージを中断してマップに戻りますか？（このステージの進行状況は失われます）';
+    overlayPrimaryEl.textContent = '▶ 続ける';
+    overlayPrimaryEl.onclick = ()=>{
+      paused = false;
+      el('overlayStatLine').classList.remove('hidden');
+      closeOverlay();
+    };
+    overlaySecondaryEl.classList.remove('hidden');
+    overlaySecondaryEl.textContent = '🗺️ 中断してマップへ';
+    overlaySecondaryEl.onclick = ()=>{
+      paused = false;
+      el('overlayStatLine').classList.remove('hidden');
+      closeOverlay();
+      inGame = false;
+      if(engine) Events.off(engine, 'collisionStart', onCollisionStart);
+      showScreen('map');
+    };
+    overlayEl.classList.remove('hidden');
   });
 
   const speedBtnEl = el('speedBtn');
@@ -1335,7 +1606,7 @@ service cloud.firestore{
   function forceNextTurn(){
     if(current && current.body) toRemove.push(current.body);
     if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
-    killsThisTurn = 0;
+    killsThisTurn = 0; comboCount = 0;
     queueIndex++;
     current = null;
     trailPoints = [];
@@ -1352,7 +1623,7 @@ service cloud.firestore{
     return { x: cx*(W/rect.width), y: cy*(H/rect.height) };
   }
   function onDown(e){
-    if(!inGame || stageOver || !current || current.launched) return;
+    if(!inGame || stageOver || paused || !current || current.launched) return;
     const p = canvasPointFromEvent(e);
     if(Math.hypot(p.x-current.body.position.x, p.y-current.body.position.y) < 42){
       dragging = true; dragPoint = p; e.preventDefault();
@@ -1377,6 +1648,7 @@ service cloud.firestore{
       Body.setStatic(current.body, false);
       Body.setVelocity(current.body, {x:dx*LAUNCH_SCALE, y:dy*LAUNCH_SCALE});
       current.launched = true; turnTimer = TURN_DURATION;
+      SFX.launch();
     } else {
       Body.setPosition(current.body, ANCHOR);
     }
@@ -1395,7 +1667,7 @@ service cloud.firestore{
     if(lastTs===null) lastTs = ts;
     const dt = Math.min(ts-lastTs, 33);
     lastTs = ts;
-    if(inGame && !stageOver){
+    if(inGame && !stageOver && !paused){
       for(let i=0;i<speedMul;i++) Engine.update(engine, 16.666);
       update(dt*speedMul);
     }
@@ -1429,6 +1701,7 @@ service cloud.firestore{
     }
 
     enemiesArr.forEach(e=>{ if(e.hitFlash>0) e.hitFlash = Math.max(0, e.hitFlash - dt/300); });
+    blocks.forEach(bl=>{ if(bl.hitFlash>0) bl.hitFlash = Math.max(0, bl.hitFlash - dt/300); });
 
     shakeAmount = Math.max(0, shakeAmount - dt*0.045);
 
@@ -1454,7 +1727,7 @@ service cloud.firestore{
       if(turnTimer<=0 || offscreen || !stillExists){
         if(stillExists) World.remove(world, current.body);
         if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
-        killsThisTurn = 0;
+        killsThisTurn = 0; comboCount = 0;
         queueIndex++;
         current = null;
         trailPoints = [];
@@ -1469,18 +1742,63 @@ service cloud.firestore{
     updateHUD();
   }
 
+  const stoneThemeTint = {
+    meadow:  'rgba(120,150,90,0.18)',
+    forest:  'rgba(60,110,70,0.22)',
+    cave:    'rgba(40,40,70,0.35)',
+    snow:    'rgba(180,210,235,0.30)',
+    volcano: 'rgba(180,60,30,0.28)',
+  };
+  function seededRand(seed){ const x=Math.sin(seed)*10000; return x-Math.floor(x); }
+
   function drawRectBody(b,color){
     ctx.save();
     ctx.translate(b.position.x, b.position.y);
     ctx.rotate(b.angle);
-    const blockImg = loadedImages.blocks[stageBackgroundKey(currentStage)];
-    if(blockImg){
-      ctx.drawImage(blockImg, -b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+    const castleImg = b.chunkType ? loadedImages.castle[b.chunkType] : null;
+    if(castleImg){
+      // 城パーツ専用イラストがあればそれを優先（透過部分はそのまま活かす）
+      ctx.drawImage(castleImg, -b.blockW/2-1,-b.blockH/2-1,b.blockW+2,b.blockH+2);
     } else {
-      ctx.fillStyle = color;
+      const themeKey = stageBackgroundKey(currentStage);
+      const blockImg = loadedImages.blocks[themeKey];
+      if(blockImg){
+        ctx.drawImage(blockImg, -b.blockW/2-0.6,-b.blockH/2-0.6,b.blockW+1.2,b.blockH+1.2);
+        const tint = stoneThemeTint[themeKey];
+        if(tint){
+          ctx.fillStyle = tint;
+          ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+        }
+      } else {
+        ctx.fillStyle = color;
+        ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+      }
+    }
+    // ヒビ割れ（ダメージを受けた城パーツほどヒビが増える）
+    if(b.maxHp>1 && b.hp<b.maxHp){
+      const dmgFrac = 1 - b.hp/b.maxHp;
+      ctx.fillStyle = `rgba(0,0,0,${dmgFrac*0.35})`;
+      ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
+      ctx.strokeStyle = 'rgba(10,8,6,0.85)'; ctx.lineWidth=1.6;
+      const nCracks = Math.min(b.maxHp-1, Math.ceil(dmgFrac*(b.maxHp-1)));
+      for(let i=0;i<nCracks;i++){
+        const seed = (b.id||1)*17 + i*31;
+        const rx = (seededRand(seed)-0.5)*b.blockW*0.7;
+        const ry = (seededRand(seed+1)-0.5)*b.blockH*0.5;
+        const dx = (seededRand(seed+2)-0.5)*b.blockW*0.5;
+        const dy = b.blockH*0.4;
+        ctx.beginPath();
+        ctx.moveTo(rx, ry-dy/2);
+        ctx.lineTo(rx+dx*0.4, ry);
+        ctx.lineTo(rx+dx, ry+dy/2);
+        ctx.stroke();
+      }
+    }
+    if(b.hitFlash>0){
+      ctx.fillStyle = `rgba(255,255,255,${b.hitFlash*0.5})`;
       ctx.fillRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     }
-    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth=1;
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth=1;
     ctx.strokeRect(-b.blockW/2,-b.blockH/2,b.blockW,b.blockH);
     ctx.restore();
   }
@@ -1556,21 +1874,46 @@ service cloud.firestore{
       }
     });
 
-    // カタパルト（拡大・存在感）
+    // カタパルト（装飾的な木製カタパルト：車輪・横木・カップ）
     const ax=ANCHOR.x, ay=ANCHOR.y, baseY=GROUND_Y+2;
     ctx.lineCap='round';
+    // 車輪
+    [ax-21, ax+21].forEach(wx=>{
+      ctx.beginPath(); ctx.fillStyle='#2a1c10'; ctx.arc(wx, baseY+6, 10, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.fillStyle='#4a3320'; ctx.arc(wx, baseY+6, 7, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#1a1008'; ctx.lineWidth=2;
+      for(let sp=0; sp<4; sp++){
+        const a=sp*Math.PI/2;
+        ctx.beginPath(); ctx.moveTo(wx,baseY+6); ctx.lineTo(wx+Math.cos(a)*7, baseY+6+Math.sin(a)*7); ctx.stroke();
+      }
+    });
+    // 脚（太め・二重トーン）
     ctx.strokeStyle = '#503a22'; ctx.lineWidth=9;
-    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.strokeStyle = '#78552f'; ctx.lineWidth=4;
-    ctx.beginPath(); ctx.moveTo(ax-30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(ax+30,baseY); ctx.lineTo(ax,ay); ctx.stroke();
-    ctx.beginPath(); ctx.fillStyle='#3c2a1a'; ctx.ellipse(ax,baseY+2,16,8,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(ax-24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = '#8a6438'; ctx.lineWidth=3.5;
+    ctx.beginPath(); ctx.moveTo(ax-24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+24,baseY); ctx.lineTo(ax,ay); ctx.stroke();
+    // 横木の補強
+    ctx.strokeStyle = '#6b4a28'; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(ax-18,baseY-15); ctx.lineTo(ax+18,baseY-15); ctx.stroke();
+    // 支柱の金具
+    ctx.beginPath(); ctx.fillStyle='#3a2a18'; ctx.ellipse(ax,baseY+2,15,7,0,0,Math.PI*2); ctx.fill();
+    // アーム（アンカーへ向かう斜めの腕）とロープ
+    ctx.strokeStyle = '#3a2a18'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(ax-6,baseY-12); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.strokeStyle = 'rgba(200,170,120,0.7)'; ctx.lineWidth=2; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(ax-18,baseY-15); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax+18,baseY-15); ctx.lineTo(ax,ay); ctx.stroke();
+    ctx.setLineDash([]);
+    // カップ（モンスターを乗せる受け皿）
+    ctx.beginPath(); ctx.fillStyle='#5a3f24'; ctx.arc(ax,ay+4,13,0,Math.PI,false); ctx.fill();
+    ctx.strokeStyle='#2a1c10'; ctx.lineWidth=2; ctx.stroke();
 
     if(dragging && current && dragPoint){
       ctx.strokeStyle='#f0c04a'; ctx.lineWidth=2; ctx.setLineDash([5,4]);
-      ctx.beginPath(); ctx.moveTo(ax-30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(ax+30,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax-24,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax+24,baseY-4); ctx.lineTo(dragPoint.x,dragPoint.y); ctx.stroke();
       ctx.setLineDash([]);
       const dx=ANCHOR.x-dragPoint.x, dy=ANCHOR.y-dragPoint.y;
       if(trajectoryHint){
@@ -1599,20 +1942,21 @@ service cloud.firestore{
 
     blocks.forEach(b=> drawRectBody(b, b.isCrenel ? '#6b5546' : '#5a4536'));
 
-    // 旗（塔の最上段ブロックに追従して描く。ブロックが崩れると一緒に傾く）
+    // 旗（塔の最上段パーツに追従して描く。パーツが崩れると一緒に傾く）
     if(castleDecor && castleDecor.flags){
       castleDecor.flags.forEach(fb=>{
         if(!fb || !blocks.includes(fb)) return;
+        const halfH = (fb.blockH||TOWER_CHUNK_H)/2;
         ctx.save();
         ctx.translate(fb.position.x, fb.position.y);
         ctx.rotate(fb.angle);
         ctx.strokeStyle = '#3a2a1a'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(0,-BLOCK_H/2); ctx.lineTo(0,-BLOCK_H/2-20); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0,-halfH); ctx.lineTo(0,-halfH-20); ctx.stroke();
         ctx.fillStyle = '#e2483a';
         ctx.beginPath();
-        ctx.moveTo(0,-BLOCK_H/2-20);
-        ctx.lineTo(16,-BLOCK_H/2-16);
-        ctx.lineTo(0,-BLOCK_H/2-11);
+        ctx.moveTo(0,-halfH-20);
+        ctx.lineTo(16,-halfH-16);
+        ctx.lineTo(0,-halfH-11);
         ctx.closePath(); ctx.fill();
         ctx.restore();
       });
@@ -1632,6 +1976,23 @@ service cloud.firestore{
       ctx.font='13px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.fillStyle='#ff6a3d';
       ctx.fillText('⚠', 0, -1);
+      ctx.restore();
+    });
+
+    crystals.forEach(c=>{
+      const pulse = 1 + Math.sin(performance.now()/220 + c.position.x)*0.15;
+      ctx.save();
+      ctx.translate(c.position.x, c.position.y);
+      ctx.rotate(c.angle);
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(95,199,224,0.28)';
+      ctx.arc(0,0,15*pulse,0,Math.PI*2); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0,-10*pulse); ctx.lineTo(7,0); ctx.lineTo(0,10*pulse); ctx.lineTo(-7,0);
+      ctx.closePath();
+      ctx.fillStyle = '#8fe0ff';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth=1.5; ctx.stroke();
       ctx.restore();
     });
 
@@ -1717,9 +2078,22 @@ service cloud.firestore{
     particles.forEach(p=>{
       const a = 1-p.t/p.life;
       ctx.globalAlpha = Math.max(0,a);
-      ctx.font='11px "Courier New",monospace'; ctx.textAlign='center';
-      ctx.fillStyle = p.color;
-      ctx.fillText(p.text, p.x, p.y - p.t/40);
+      if(p.big){
+        const scale = 1 + Math.min(p.t/120, 1)*0.25;
+        ctx.save();
+        ctx.translate(p.x, p.y - p.t/30);
+        ctx.scale(scale, scale);
+        ctx.font='bold 16px "Courier New",monospace'; ctx.textAlign='center';
+        ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.6)';
+        ctx.strokeText(p.text, 0, 0);
+        ctx.fillStyle = p.color;
+        ctx.fillText(p.text, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.font='11px "Courier New",monospace'; ctx.textAlign='center';
+        ctx.fillStyle = p.color;
+        ctx.fillText(p.text, p.x, p.y - p.t/40);
+      }
       ctx.globalAlpha = 1;
     });
 
@@ -1739,6 +2113,11 @@ service cloud.firestore{
 
   // ---------- 起動 ----------
   preloadImages();
+  // 対応端末（主にAndroid・PWAインストール後など）ではネイティブAPIでの横向き固定も試みる。
+  // 未対応環境（iOS Safari等）では失敗するが、その場合はCSSの回転処理で代替する。
+  if(screen.orientation && screen.orientation.lock){
+    screen.orientation.lock('landscape').catch(()=>{ /* 未対応環境ではCSS側の回転で代替 */ });
+  }
   el('overlayPrimaryBtn'); // no-op ref warm-up
   refreshTopbar();
   refreshMissionDot();
