@@ -197,8 +197,6 @@
     updateCanvasSize();
   }
   function updateCanvasSize(){
-    const wrap = document.getElementById('canvasWrap');
-    if(wrap) wrap.style.aspectRatio = `${W} / ${H}`;
     if(typeof pixiApp !== 'undefined' && pixiApp){
       pixiApp.renderer.resolution = Math.min(window.devicePixelRatio || 1, 3);
       pixiApp.renderer.resize(W, H);
@@ -213,7 +211,8 @@
     });
     return { gold: 300, monsters, stages: {}, totalScore: 0, sfxOn: true, upgrades: {power:0, range:0, ammo:0},
              stats: {totalKills:0, totalChunksDestroyed:0, totalCrystals:0, maxCombo:0},
-             achievements: {} };
+             achievements: {},
+             party: MONSTER_ORDER.filter(k=>MONSTER_DEFS[k].ownedDefault).slice(0,3) };
   }
   let state = Object.assign(defaultState(), Storage.get('mc_state', {}));
   if(!state.upgrades) state.upgrades = {power:0, range:0, ammo:0};
@@ -221,6 +220,10 @@
   if(!state.achievements) state.achievements = {};
   // 深いマージ漏れ対策（旧セーブに新モンスターが無い場合を補完）
   MONSTER_ORDER.forEach(k=>{ if(!state.monsters[k]) state.monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault?1:0 }; });
+  if(!state.party || !state.party.length) state.party = MONSTER_ORDER.filter(k=>state.monsters[k].owned).slice(0,3);
+  // 所持していないモンスターがパーティに残っていた場合の保険
+  state.party = state.party.filter(k=> state.monsters[k] && state.monsters[k].owned);
+  if(state.party.length===0) state.party = MONSTER_ORDER.filter(k=>state.monsters[k].owned).slice(0,3);
   function saveState(){ Storage.set('mc_state', state); }
 
   function levelUpCost(key){
@@ -398,11 +401,15 @@
       } else {
         actionHtml = `<div class="m-action"><button class="btn" data-levelup="${key}">強化する</button><div class="cost">${levelUpCost(key)}G</div></div>`;
       }
+    } else if(mode==='view' && owned){
+      const inParty = state.party.includes(key);
+      actionHtml = `<div class="m-action"><button class="btn ${inParty?'':'btn-ghost'} party-btn" data-party="${key}">${inParty?'✓ 編成中':'編成に入れる'}</button></div>`;
     }
 
     const hasImg = owned && IMAGE_ASSETS.monsters[key];
     const iconStyle = `background:${def.color}33;border:1px solid ${def.color};` + (hasImg ? monsterIconStyle(key) : '');
-    return `<div class="monster-card ${owned?'':'locked'}">
+    const inPartyClass = (mode==='view' && owned && state.party.includes(key)) ? 'in-party' : '';
+    return `<div class="monster-card ${owned?'':'locked'} ${inPartyClass}">
       <div class="m-icon" style="${iconStyle}">${hasImg?'':(owned?def.emoji:'🔒')}</div>
       <div class="m-body">
         <div class="m-head"><span class="m-name">${def.name}</span><span class="m-lv">${owned?('Lv.'+level):'未解放'}</span></div>
@@ -415,7 +422,48 @@
   }
 
   function renderMonsters(){
-    el('monsterList').innerHTML = MONSTER_ORDER.map(k=> buildMonsterCard(k,'view')).join('');
+    const partyHtml = `<div class="party-bar">
+      <div class="party-bar-label">出撃パーティ（${state.party.length}/3）</div>
+      <div class="party-slots">
+        ${[0,1,2].map(i=>{
+          const key = state.party[i];
+          if(!key) return `<div class="party-slot empty">+</div>`;
+          const def = MONSTER_DEFS[key];
+          const style = IMAGE_ASSETS.monsters[key] ? monsterIconStyle(key) : `background:${def.color}33;`;
+          return `<div class="party-slot" style="${style}">${IMAGE_ASSETS.monsters[key]?'':def.emoji}</div>`;
+        }).join('')}
+      </div>
+    </div>`;
+    el('monsterList').innerHTML = partyHtml + MONSTER_ORDER.map(k=> buildMonsterCard(k,'view')).join('');
+    el('monsterList').querySelectorAll('[data-party]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const key = btn.dataset.party;
+        const idx = state.party.indexOf(key);
+        if(idx>=0){
+          state.party.splice(idx,1);
+        } else {
+          if(state.party.length>=3){
+            pushToast('パーティは3体までです');
+            return;
+          }
+          state.party.push(key);
+        }
+        saveState(); SFX.click(); renderMonsters();
+      });
+    });
+  }
+  function pushToast(msg){
+    let el2 = document.getElementById('toastMsg');
+    if(!el2){
+      el2 = document.createElement('div');
+      el2.id = 'toastMsg';
+      el2.className = 'toast-msg';
+      document.body.appendChild(el2);
+    }
+    el2.textContent = msg;
+    el2.classList.add('show');
+    clearTimeout(el2._t);
+    el2._t = setTimeout(()=> el2.classList.remove('show'), 1800);
   }
 
   function renderShop(){
@@ -673,7 +721,7 @@
   function initPixi(){
     pixiApp = new PIXI.Application({
       view: canvas, width: W, height: H,
-      resolution: Math.min(window.devicePixelRatio || 1, 3), autoDensity: true,
+      resolution: Math.min(window.devicePixelRatio || 1, 3), autoDensity: false,
       backgroundAlpha: 0, antialias: true,
     });
     ['bg','ground','launcher','castleGate','castle','flags','barrels','crystals','enemies','trail','current','fx','particles','aim']
@@ -869,14 +917,16 @@
 
   function buildAmmoQueue(n){
     const sp = stageParams(n);
-    const pool = MONSTER_ORDER.filter(k=> state.monsters[k].owned);
+    let pool = state.party.filter(k=> state.monsters[k] && state.monsters[k].owned);
+    if(pool.length===0) pool = MONSTER_ORDER.filter(k=> state.monsters[k].owned); // 保険
     const queue = [];
     for(let i=0;i<sp.ammoLen;i++) queue.push(pool[Math.floor(Math.random()*pool.length)]);
-    // ボスステージは爆発（ドラゴン）を最低2体保証し、爆発系が一切引けず詰む事故を防ぐ
-    if(sp.isBoss && pool.includes('dragon')){
-      let dragonCount = queue.filter(k=>k==='dragon').length;
-      for(let i=0; i<queue.length && dragonCount<2; i++){
-        if(queue[i] !== 'dragon'){ queue[i] = 'dragon'; dragonCount++; }
+    // ボスステージは編成に爆発系（ドラゴン/フェニックス）がいれば最低2体保証し、詰む事故を防ぐ
+    const explosiveType = pool.includes('dragon') ? 'dragon' : (pool.includes('phoenix') ? 'phoenix' : null);
+    if(sp.isBoss && explosiveType){
+      let expCount = queue.filter(k=>k===explosiveType).length;
+      for(let i=0; i<queue.length && expCount<2; i++){
+        if(queue[i] !== explosiveType){ queue[i] = explosiveType; expCount++; }
       }
     }
     return queue;
