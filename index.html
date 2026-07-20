@@ -123,7 +123,7 @@ html,body{
 .shop-tabs{ display:flex; gap:8px; margin-bottom:12px; }
 .shop-tab{
   flex:1; text-align:center; padding:9px 0; border-radius:12px; font-size:12px; font-weight:800;
-  background:var(--surface); border:2px solid var(--ink); color:var(--mist); cursor:pointer;
+  background:var(--surface); border:2px solid var(--ink); color:var(--mist); cursor:pointer; position:relative;
 }
 .shop-tab.active{ background:var(--gold); color:var(--ink); box-shadow:0 3px 0 var(--ink); }
 .upgrade-card{
@@ -253,6 +253,8 @@ html,body{
   padding:12px 14px; margin-bottom:10px; box-shadow:0 4px 0 var(--ink);
 }
 .mission-card.done{ background:color-mix(in srgb, var(--mint) 16%, var(--surface)); }
+.mission-card.claimed{ opacity:.55; }
+.mission-card .ach-icon{ font-size:20px; margin-right:6px; }
 .mission-text{ font-size:12.5px; margin-bottom:8px; display:flex; justify-content:space-between; gap:6px; font-weight:700; color:var(--cloud); }
 .mission-reward{ color:var(--gold); font-size:11px; white-space:nowrap; font-weight:800; }
 .progress-bar{ height:9px; border-radius:5px; background:var(--bg-2); overflow:hidden; margin-bottom:8px; border:1px solid var(--ink); }
@@ -356,6 +358,10 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
 .nav-item .icon{ font-size:19px; display:block; transition:transform .12s; }
 .nav-item .txt{ font-size:9.5px; margin-top:3px; font-weight:700; }
 .nav-dot{ position:absolute; margin-left:14px; margin-top:-2px; width:8px; height:8px; border-radius:50%; background:var(--rose); border:1.5px solid var(--ink); }
+.shop-tab.has-dot::after{
+  content:''; position:absolute; top:5px; right:10px; width:8px; height:8px; border-radius:50%;
+  background:var(--rose); border:1.5px solid var(--ink);
+}
 
 .ranking-list{ list-style:none; margin:0 0 10px; padding:0; }
 .ranking-list li{ display:flex; justify-content:space-between; padding:9px 6px; font-size:12.5px; border-bottom:2px solid var(--bg-2); font-weight:600; }
@@ -427,9 +433,14 @@ canvas{ display:block; width:100%; height:100%; touch-action:none; }
 
   <!-- ===================== ミッション ===================== -->
   <section id="screen-missions" class="screen hidden">
-    <div class="screen-title">デイリーミッション<div class="bar"></div></div>
-    <p class="footnote" style="margin-bottom:8px;">毎日0時に更新されます（この試作版では日付が変わると自動更新）</p>
+    <div class="screen-title">ミッション<div class="bar"></div></div>
+    <div class="shop-tabs">
+      <div class="shop-tab active" id="missionTabDaily" data-msntab="daily">デイリー</div>
+      <div class="shop-tab" id="missionTabAchieve" data-msntab="achieve">実績</div>
+    </div>
+    <p class="footnote" style="margin-bottom:8px;" id="missionFootnote">毎日0時に更新されます（この試作版では日付が変わると自動更新）</p>
     <div id="missionList"></div>
+    <div id="achieveList" class="hidden"></div>
   </section>
 
   <!-- ===================== ランキング ===================== -->

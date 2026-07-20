@@ -49,8 +49,14 @@
     centaur:  {name:'ウィンドケンタウルス', emoji:'🏹', color:'#4fa8e0', special:'pierce', specialText:'飛行中に浮力がかかり、伸びのある低伸弾道で貫通する',
                radius:9,  density:0.0020, restitution:0.20, friction:0.4,
                basePower:2, baseWeight:2, ownedDefault:false, unlockCost:900, levelBase:300},
+    woodkin:  {name:'ウッドキン',       emoji:'🌳', color:'#7a5a34', special:'heavy',   specialText:'太い根で構造物にめり込み、力任せに突き崩す',
+               radius:12, density:0.0048, restitution:0.10, friction:0.65,
+               basePower:3, baseWeight:5, ownedDefault:false, unlockCost:700, levelBase:270},
+    phoenix:  {name:'フェニックス',     emoji:'🔥', color:'#ff9a3d', special:'explode', specialText:'着弾で炎上・爆発し、範囲内の敵を一掃する',
+               radius:12, density:0.0024, restitution:0.26, friction:0.45,
+               basePower:4, baseWeight:3, ownedDefault:false, unlockCost:1100, levelBase:260},
   };
-  const MONSTER_ORDER = ['slime','dragon','icegolem','spikeball','skeleton','centaur'];
+  const MONSTER_ORDER = ['slime','dragon','icegolem','spikeball','skeleton','centaur','woodkin','phoenix'];
 
   // ---------- カタパルト強化（アカウント永続・全モンスター共通で効く） ----------
   const UPGRADE_DEFS = {
@@ -75,6 +81,34 @@
     {id:'clear_stage_2',text:'ステージを2回クリアする',                target:2,   track:'stageClear',    reward:150},
     {id:'combo_1',      text:'1ターンで敵を2体同時に撃破する',        target:1,   track:'combo',         reward:100},
     {id:'leftover_1',   text:'弾を1発以上残してステージをクリアする',  target:1,   track:'leftover',      reward:100},
+  ];
+
+  // ---------- 実績（永続的な長期目標。デイリーミッションと違いリセットされない） ----------
+  const ACHIEVEMENT_DEFS = [
+    {id:'ach_first_clear', icon:'🏆', text:'初めてのステージクリア',        reward:50,
+     target:1, getProgress:()=> Object.values(state.stages).some(s=>s.cleared) ? 1 : 0},
+    {id:'ach_kill_50',     icon:'👹', text:'累計50体のモンスターを撃破',   reward:150,
+     target:50, getProgress:()=> state.stats.totalKills},
+    {id:'ach_kill_300',    icon:'💀', text:'累計300体のモンスターを撃破', reward:400,
+     target:300, getProgress:()=> state.stats.totalKills},
+    {id:'ach_chunk_100',   icon:'🏰', text:'城パーツを累計100個破壊',     reward:250,
+     target:100, getProgress:()=> state.stats.totalChunksDestroyed},
+    {id:'ach_crystal_10',  icon:'💎', text:'隠しクリスタルを10回破壊',    reward:200,
+     target:10, getProgress:()=> state.stats.totalCrystals},
+    {id:'ach_all_monsters',icon:'👥', text:'全モンスターを解放する',      reward:300,
+     target:MONSTER_ORDER.length, getProgress:()=> MONSTER_ORDER.filter(k=>state.monsters[k].owned).length},
+    {id:'ach_lv20',        icon:'⭐', text:'いずれかのモンスターをLv20にする', reward:250,
+     target:20, getProgress:()=> Math.max(0,...MONSTER_ORDER.map(k=>state.monsters[k].level||0))},
+    {id:'ach_lv_max',      icon:'👑', text:'いずれかのモンスターをLv50（カンスト）にする', reward:600,
+     target:LEVEL_MAX, getProgress:()=> Math.max(0,...MONSTER_ORDER.map(k=>state.monsters[k].level||0))},
+    {id:'ach_world1',      icon:'🗺️', text:'ワールド1を制覇する',         reward:300,
+     target:STAGES_PER_WORLD, getProgress:()=>{ let n=0; for(let i=1;i<=STAGES_PER_WORLD;i++) if(state.stages[i]&&state.stages[i].cleared) n++; return n; }},
+    {id:'ach_3star',       icon:'✨', text:'いずれかのステージで★3を獲得', reward:150,
+     target:1, getProgress:()=> Object.values(state.stages).some(s=>s.stars>=3) ? 1 : 0},
+    {id:'ach_combo5',      icon:'✖️', text:'1ターンで5体以上を同時撃破する', reward:300,
+     target:5, getProgress:()=> state.stats.maxCombo},
+    {id:'ach_all_clear',   icon:'🌟', text:'全ワールドを制覇する',         reward:800,
+     target:TOTAL_STAGES, getProgress:()=>{ let n=0; for(let i=1;i<=TOTAL_STAGES;i++) if(state.stages[i]&&state.stages[i].cleared) n++; return n; }},
   ];
 
   // ---------- 画像アセット差し込み口（未設定なら自動的にCanvas/絵文字描画にフォールバック） ----------
@@ -107,6 +141,7 @@
     monsters: {          // 各モンスターの立ち絵/アイコン（推奨: 480x480, png/透過）
       slime:'monster-slime.png', dragon:'monster-dragon.png', icegolem:'monster-icegolem.png',
       spikeball:'monster-spikeball.png', skeleton:'monster-skeleton.png', centaur:'monster-centaur.png',
+      woodkin:'monster-woodkin.png', phoenix:'monster-phoenix.png',
     },
   };
   function stageBackgroundKey(stageN){
@@ -176,10 +211,14 @@
     MONSTER_ORDER.forEach(k=>{
       monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault ? 1 : 0 };
     });
-    return { gold: 300, monsters, stages: {}, totalScore: 0, sfxOn: true, upgrades: {power:0, range:0, ammo:0} };
+    return { gold: 300, monsters, stages: {}, totalScore: 0, sfxOn: true, upgrades: {power:0, range:0, ammo:0},
+             stats: {totalKills:0, totalChunksDestroyed:0, totalCrystals:0, maxCombo:0},
+             achievements: {} };
   }
   let state = Object.assign(defaultState(), Storage.get('mc_state', {}));
   if(!state.upgrades) state.upgrades = {power:0, range:0, ammo:0};
+  if(!state.stats) state.stats = {totalKills:0, totalChunksDestroyed:0, totalCrystals:0, maxCombo:0};
+  if(!state.achievements) state.achievements = {};
   // 深いマージ漏れ対策（旧セーブに新モンスターが無い場合を補完）
   MONSTER_ORDER.forEach(k=>{ if(!state.monsters[k]) state.monsters[k] = { owned: MONSTER_DEFS[k].ownedDefault, level: MONSTER_DEFS[k].ownedDefault?1:0 }; });
   function saveState(){ Storage.set('mc_state', state); }
@@ -270,7 +309,7 @@
     if(name==='map'){ applyOrientationProfile(); mapWorldView = worldForStage(unlockedUpTo()); renderMap(); }
     if(name==='monsters') renderMonsters();
     if(name==='shop') switchShopTab(shopTab);
-    if(name==='missions') renderMissions();
+    if(name==='missions') switchMissionTab(missionTab);
     if(name==='ranking'){ el('myTotalScore').textContent = state.totalScore; loadRanking(); }
     if(name==='splash'){ el('splashHighScore').textContent = state.totalScore; el('splashGold').textContent = state.gold; }
     refreshTopbar();
@@ -484,6 +523,58 @@
     });
     refreshMissionDot();
   }
+
+  function renderAchievements(){
+    const wrap = el('achieveList');
+    wrap.innerHTML = ACHIEVEMENT_DEFS.map(def=>{
+      const progress = Math.min(def.target, def.getProgress());
+      const done = progress >= def.target;
+      const claimed = !!state.achievements[def.id];
+      const pct = Math.min(100, Math.round((progress/def.target)*100));
+      const claimBtn = claimed
+        ? `<span class="count">受取済み</span>`
+        : done
+          ? `<button class="btn claim-btn" data-claimach="${def.id}">受け取る</button>`
+          : `<span class="count">${progress}/${def.target}</span>`;
+      return `<div class="mission-card ${done?'done':''} ${claimed?'claimed':''}">
+        <div class="mission-text"><span><span class="ach-icon">${def.icon}</span>${def.text}</span><span class="mission-reward">+${def.reward}G</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div class="mission-foot">${claimBtn}</div>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('[data-claimach]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.dataset.claimach;
+        const def = ACHIEVEMENT_DEFS.find(a=>a.id===id);
+        if(!def || state.achievements[id]) return;
+        if(def.getProgress() < def.target) return;
+        state.achievements[id] = true;
+        state.gold += def.reward;
+        saveState();
+        refreshTopbar(); refreshAchieveDot(); renderAchievements();
+        SFX.buy();
+      });
+    });
+    refreshAchieveDot();
+  }
+  function refreshAchieveDot(){
+    const hasClaimable = ACHIEVEMENT_DEFS.some(def=> !state.achievements[def.id] && def.getProgress() >= def.target);
+    const tab = document.getElementById('missionTabAchieve');
+    if(tab) tab.classList.toggle('has-dot', hasClaimable);
+  }
+
+  let missionTab = 'daily';
+  function switchMissionTab(tab){
+    missionTab = tab;
+    el('missionTabDaily').classList.toggle('active', tab==='daily');
+    el('missionTabAchieve').classList.toggle('active', tab==='achieve');
+    el('missionList').classList.toggle('hidden', tab!=='daily');
+    el('achieveList').classList.toggle('hidden', tab!=='achieve');
+    el('missionFootnote').style.display = tab==='daily' ? '' : 'none';
+    if(tab==='daily') renderMissions(); else renderAchievements();
+  }
+  el('missionTabDaily').addEventListener('click', ()=>{ SFX.click(); switchMissionTab('daily'); });
+  el('missionTabAchieve').addEventListener('click', ()=>{ SFX.click(); switchMissionTab('achieve'); });
 
   // ---------- ランキング ----------
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -748,6 +839,7 @@
     toRemove.push(body);
     const points = body.isCrenel ? 30 : 80;
     stageScore += points;
+    state.stats.totalChunksDestroyed++;
     pushParticle(body.position.x, body.position.y, (body.isCrenel?'+':'崩壊! +')+points, '#ffb057');
     spawnDebris(body.position.x, body.position.y, '#8a7263', body.isCrenel?7:18);
     triggerShake(body.isCrenel?4:11);
@@ -877,6 +969,9 @@
     if(a===current.body && a.label==='proj_dragon' && !current.exploded && b.label!=='proj_dragon'){
       current.exploded = true; explodeAt(a.position);
     }
+    if(a===current.body && a.label==='proj_phoenix' && !current.exploded && b.label!=='proj_phoenix'){
+      current.exploded = true; explodeAt(a.position);
+    }
     if(a===current.body && a.label==='proj_icegolem' && !current.exploded && b.label!=='proj_icegolem'){
       current.exploded = true; freezeAt(a.position);
     }
@@ -905,6 +1000,8 @@
     const points = Math.round(basePoints * comboMult);
     stageScore += points;
     killsThisTurn++;
+    state.stats.totalKills++;
+    if(comboCount > state.stats.maxCombo) state.stats.maxCombo = comboCount;
     bumpMissionTrack('anyKill', 1);
     if(current) bumpMissionTrack('type:'+current.type, 1);
     if(source==='explosion') bumpMissionTrack('explosionKill', 1);
@@ -971,6 +1068,7 @@
     const scoreBonus = 200 + currentStage*20;
     state.gold += goldBonus;
     stageScore += scoreBonus;
+    state.stats.totalCrystals++;
     pushParticle(body.position.x, body.position.y-10, `💎 CRYSTAL! +${scoreBonus}pt +${goldBonus}G`, '#5fc7e0', true);
     spawnDebris(body.position.x, body.position.y, '#8fe0ff', 18);
     triggerShake(8);
@@ -1077,6 +1175,7 @@
       if(leftover>=1) bumpMissionTrack('leftover', 1);
       if(killsThisTurn>=2) bumpMissionTrack('combo', 1);
       saveState();
+      refreshAchieveDot();
 
       overlayTitleEl.textContent = 'ステージクリア！';
       overlayTitleEl.className = 'win';
@@ -1797,6 +1896,7 @@
   el('overlayPrimaryBtn'); // no-op ref warm-up
   refreshTopbar();
   refreshMissionDot();
+  refreshAchieveDot();
   showScreen('splash');
   if(typeof Matter === 'undefined'){
     alert('物理エンジン(Matter.js)の読み込みに失敗しました。通信環境を確認してください。');
